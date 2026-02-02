@@ -22,21 +22,21 @@ class Example:
         self.dt = 0.1
 
     def step(self):
-        size = self.positions.size()
+        shape = self.positions.shape
         speed = 1.3  # m/s
-        velocities = (np.random.rand(size[0], size[1]) - 0.5) * speed
+        velocities = (np.random.rand(shape[0], shape[1]) - 0.5) * speed
         self.positions += velocities * self.dt
 
     def step_and_render_frame(self, frame_num=None, agents=None):
-        # self.step()
+        self.step()
         
-        # # Update agent patches
-        # if agents:
-        #     for i, agent in enumerate(agents):
-        #         pos = self.positions[i]
-        #         agent.center = (pos[0], pos[1])
+        # Update agent patches
+        if agents:
+            for i, agent in enumerate(agents):
+                pos = self.positions[i]
+                agent.center = (pos[0], pos[1])
 
-        return (agents, )
+        return agents
 
 
 if __name__ == '__main__':

@@ -9,10 +9,13 @@ ax.set_xlim(0, 10)
 ax.set_ylim(0, 10)
 ax.set_aspect('equal') # Ensures the circle looks like a circle, not an ellipse
 
+agents = []
 # --- Create the circle patch and add it to the axes ---
 # Initial position (x, y) and radius
-circle = Circle((5, 5), 0.5, fc='blue', alpha=0.6)
-ax.add_patch(circle)
+for i in range(5):
+    circle = Circle((5, 5), 0.5, fc='blue', alpha=0.6)
+    ax.add_patch(circle)
+    agents.append(circle)
 
 # --- Animation functions ---
 
@@ -22,21 +25,23 @@ def init():
     circle.center = (5, 5)
     return circle,
 
-def animate(i, c=None):
+def animate(i, agents=None):
     """
     Update function for each frame of the animation.
     
     Args:
         i (int): The current frame number (provided by FuncAnimation).
     """
-    # Calculate new position based on frame number 'i' to create movement
-    # For example, a simple circular motion
-    x = 5 + 3 * np.sin(np.radians(i * 2)) # Move in a circle with radius 3
-    y = 5 + 3 * np.cos(np.radians(i * 2))
+    for a, c in enumerate(agents):
+        # Calculate new position based on frame number 'i' to create movement
+        # For example, a simple circular motion
+        offset = a * 15
+        x = 5 + 3 * np.sin(np.radians((i + offset) * 2)) # Move in a circle with radius 3
+        y = 5 + 3 * np.cos(np.radians((i + offset) * 2))
+        
+        c.center = (x, y) # Update the circle's center
     
-    c.center = (x, y) # Update the circle's center
-    
-    return c,
+    return agents
 
 # --- Create and run the animation ---
 # frames: number of frames in the animation (e.g., 360 frames for a smooth circle path)
@@ -45,8 +50,8 @@ def animate(i, c=None):
 ani = animation.FuncAnimation(
     fig, 
     animate,
-    fargs=(circle,),
-    init_func=init, 
+    fargs=(agents,),
+    # init_func=init, 
     frames=360, 
     interval=20, 
     blit=True
