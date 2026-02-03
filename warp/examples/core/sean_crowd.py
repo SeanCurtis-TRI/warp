@@ -20,6 +20,10 @@ reaction_time = wp.constant(0.5)
 # Note: I've got 0.015 in Menge; this doesn't work well here. Not sure; don't care.
 force_distance = wp.constant(radius * 10)
 
+# Density field
+field_width = wp.constant(128)
+field_height = wp.constant(128)
+
 
 @wp.func
 def compute_single_wall_force(p: wp.vec2, wall_pos: wp.vec2, wall_normal: wp.vec2):
@@ -120,6 +124,42 @@ def integrate(p: wp.array(dtype=wp.vec2), v: wp.array(dtype=wp.vec2),
         v[id] = v[id] * (max_speed / new_speed)
 
 
+@wp.kernel
+def update_block_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype=float)):
+    i, j = wp.tid()
+    rho[j, i] = 0.0
+    fw = float(field_width)
+    fh = float(field_height)
+    rho_support = 4.0  # length of block side, m.
+    kSize = int(rho_support * float(field_width) / domain_width + 0.5)
+    kDelta = kSize // 2
+    norm = 1.0 / float(rho_support * rho_support)
+    for a in range(len(p)):
+        pos = p[a]
+        # Map position to field coordinates.
+        x = int(((pos.x + (domain_width * 0.5)) / domain_width) * fw + 0.5)
+        y = int(((pos.y + (domain_height * 0.5)) / domain_height) * fh + 0.5)
+        # Splat each agent into a kxk block.
+        if x >= i - kDelta and x <= i + kDelta and y >= j - kDelta and y <= j + kDelta:
+            rho[j, i] += norm
+
+@wp.kernel
+def update_circle_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype=float)):
+    i, j = wp.tid()
+    rho[j, i] = 0.0
+    cx = (float(i) + 0.5) * domain_width / float(field_width) - (domain_width * 0.5)
+    cy = (float(j) + 0.5) * domain_height / float(field_height) - (domain_height * 0.5)
+    c = wp.vec2(cx, cy)
+    rho_support = 2.0 # radius of circle, m.
+    support_sq = rho_support * rho_support
+    norm = 1.0 / (np.pi * support_sq)
+    for a in range(len(p)):
+        pos = p[a]
+        dist_sq = wp.length_sq(pos - c)
+        if dist_sq <= support_sq:
+            rho[j, i] += norm
+
+
 class Scenario:
     def __init__(self, positions, velocities, goals, colors):
         assert len(positions) == len(velocities) == len(goals) == len(colors)
@@ -159,7 +199,7 @@ def circle_scenario(num_agents: int):
 
     dtheta = 2.0 * np.pi / num_agents
     for i in range(num_agents):
-        theta = i * dtheta
+        theta = i * dtheta + 0.35
         c = np.cos(theta)
         s = np.sin(theta)
         positions[i, 0] = R * c
@@ -212,6 +252,8 @@ class Simulation:
 
         self.agent_radius = radius
 
+        self.density = wp.zeros((field_width, field_height), dtype=float)
+
         self.sub_steps = 25
         self.dt = 0.001 * self.sub_steps  # Effectively dt = 0.001
 
@@ -231,25 +273,40 @@ class Simulation:
             if (np.abs(v) < 6e-2).all():
                 print("All agents stopped moving!")
                 return False
-            else:
-                print("Maximum speed componenent:", np.max(np.abs(v)))
         return True
 
-    def step_and_render_frame(self, frame_num=None, agents=None):
+    def update_density(self):
+        wp.launch(update_circle_density, dim=(field_width, field_height),
+                  inputs=[self.positions, self.density])
+
+    def map_to_field(self, p):
+        """Given a position in "world" space, map it to the density field.
+
+        [-hw, -hhw]x[hw, hh] --> [0, 0]x[field_width, field_height]
+        """
+        p += np.array(((domain_width * 0.5, domain_height * 0.5),))
+        p *= np.array(((field_width / domain_width, field_height / domain_height),))
+        return p
+
+    def step_and_render_frame(self, frame_num=None, agents=None, density_img=None):
         running = self.step()
         
         # Update agent patches
         with wp.ScopedTimer("render"):
             if agents:
-                positions = self.positions.numpy()
+                positions = self.map_to_field(self.positions.numpy())
                 for i, agent in enumerate(agents):
                     pos = positions[i]
                     agent.center = (pos[0], pos[1])
+        if density_img:
+            with wp.ScopedTimer("density"):
+                self.update_density()
+                density_img.set_array(self.density.numpy())
 
         if not running:
             global seq
             seq.event_source.stop()
-        return agents
+        return agents + [density_img]
 
 
 if __name__ == '__main__':
@@ -273,32 +330,45 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     with wp.ScopedDevice(args.device):
-        scenario = scenarios[args.scenario](args.num_agents)
-        Simulation = Simulation(scenario)
+        import matplotlib
         import matplotlib.patches as patches
         import matplotlib.animation as anim
         import matplotlib.pyplot as plt
 
+        scenario = scenarios[args.scenario](args.num_agents)
+        sim = Simulation(scenario)
+
         agents = []
 
         fig, ax = plt.subplots()
-        half_width = domain_width * 0.5
-        half_height = domain_height * 0.5
-        ax.set_xlim(-half_width, half_width)
-        ax.set_ylim(-half_height, half_height)
+
+        img = plt.imshow(
+            sim.density.numpy(),
+            origin="lower",
+            animated=True,
+            interpolation="antialiased",
+        )
+        img.set_norm(matplotlib.colors.Normalize(0.0, 6.0))
+        plt.colorbar(img, label='ρ (people/m²)')
+        # half_width = domain_width * 0.5
+        # half_height = domain_height * 0.5
+        # ax.set_xlim(-half_width, half_width)
+        # ax.set_ylim(-half_height, half_height)
         ax.set_aspect('equal') # Important for circles to appear round
 
-        # Add circles as patches
-        for i, pi in enumerate(Simulation.positions.numpy()):
-            circle = patches.Circle(pi, radius=Simulation.agent_radius,
-                                    color=scenario.colors[i, :])
+        # Add circles as patches.
+        # We're scaling the radius to the field dimensions. We're assuming that
+        # the field and simulation domain have the same aspect ratio.
+        r = sim.agent_radius * field_width / domain_width
+        for i, pi in enumerate(sim.positions.numpy()):
+            circle = patches.Circle(pi, radius=r, color=scenario.colors[i, :])
             ax.add_patch(circle)
             agents.append(circle)
 
         seq = anim.FuncAnimation(
             fig,
-            Simulation.step_and_render_frame,
-            fargs=(agents,),
+            sim.step_and_render_frame,
+            fargs=(agents, img),
             frames=args.num_frames,
             blit=True,
             interval=1,
