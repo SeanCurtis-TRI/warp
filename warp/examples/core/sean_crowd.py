@@ -33,13 +33,40 @@ def compute_wall_forces(p: wp.vec2):
                                        wp.vec2(0.0, -1.0))
     return force
 
+
+@wp.func
+def compute_single_agent_force(p: wp.vec2, q: wp.vec2):
+    """Computes the repulsive force on agent at position p due to another agent at position q."""
+    force_distance = 4.0 * radius
+    r_QP = p - q
+    dist_QP = wp.norm_l2(r_QP)
+    if dist_QP > force_distance or dist_QP < 1e-5:
+        return wp.vec2(0.0, 0.0)
+    repulsion_gain = 1.0
+    effect_radius = 4.0 * radius
+    mag = repulsion_gain * wp.exp((2.0 * radius) - dist_QP) / effect_radius
+    mag = min(mag, 1e5)
+    return r_QP * (mag / dist_QP)
+
+
+@wp.func
+def compute_agent_forces(id: int, p: wp.array(dtype=wp.vec2)):
+    force = wp.vec2(0.0, 0.0)
+    for i in range(len(p)):
+        if i == id:
+            continue
+        force += compute_single_agent_force(p[id], p[i])
+
+    return force
+
+
 @wp.kernel
 def compute_accel(p: wp.array(dtype=wp.vec2), a: wp.array(dtype=wp.vec2)):
     id = wp.tid()
     p0 = p[id]
     # We assume unit mass, so a = f / 1.0.
     a_val = compute_wall_forces(p0)
-    # TODO: This should be distance-based agent-agent calculations
+    a_val += compute_agent_forces(id, p)
     a[id] = a_val
 
 
@@ -49,6 +76,9 @@ def integrate(p: wp.array(dtype=wp.vec2), v: wp.array(dtype=wp.vec2),
     id = wp.tid()
     p[id] += v[id] * dt
     v[id] += a[id] * dt
+    new_speed = wp.norm_l2(v[id])
+    if new_speed > 2.0:
+        v[id] = v[id] * (2.0 / new_speed)
 
 
 class Example:
