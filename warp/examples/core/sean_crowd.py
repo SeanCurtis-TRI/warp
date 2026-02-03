@@ -96,6 +96,7 @@ def compute_driving_force(id: int, p: wp.array(dtype=wp.vec2),
     force = mass * (v_pref - v[id]) / reaction_time  # Assuming unit mass here.
     return force
 
+
 @wp.kernel
 def compute_accel(p: wp.array(dtype=wp.vec2), v: wp.array(dtype=wp.vec2),
                   a: wp.array(dtype=wp.vec2), g: wp.array(dtype=wp.vec2),
@@ -121,23 +122,46 @@ def integrate(p: wp.array(dtype=wp.vec2), v: wp.array(dtype=wp.vec2),
         v[id] = v[id] * (max_speed / new_speed)
 
 
-class Example:
-    def __init__(self, num_agents: int = 10):
-        self.num_agents = num_agents
-        measure = min(domain_width, domain_height)
-        init_positions = (np.random.rand(num_agents, 2) - 0.5) * measure
-        self.positions = wp.array(init_positions, dtype=wp.vec2)
+class Scenario:
+    def __init__(self, positions, velocities, goals, colors):
+        assert len(positions) == len(velocities) == len(goals) == len(colors)
+        self.positions = positions
+        self.velocities = velocities
+        self.goals = goals
+        self.colors = colors
 
-        distances = np.sqrt(np.sum(init_positions**2, axis=1))
-        distances.shape = (-1, 1)
-        dirs = init_positions / distances
-        init_velocities = np.empty_like(init_positions)
-        init_velocities[:, 0] = dirs[:, 1]
-        init_velocities[:, 1] = -dirs[:, 0]
-        self.velocities = wp.array(init_velocities, dtype=wp.vec2)
+# Functions for creating the initial conditions of scenarios. Each returns
+# initial positions, velocities, goals, and per-agent colors.
+
+def random_scenario(num_agents: int):
+    # Initial positions randomly distributed through the domain.
+    measure = min(domain_width, domain_height)
+    positions = (np.random.rand(num_agents, 2) - 0.5) * measure
+
+    goals = -positions
+
+    # Initial velocity for moving in a circle around the origin.
+    distances = np.sqrt(np.sum(positions**2, axis=1))
+    distances.shape = (-1, 1)
+    dirs = positions / distances
+    velocities = np.empty_like(positions)
+    velocities[:, 0] = dirs[:, 1]
+    velocities[:, 1] = -dirs[:, 0]
+
+    # Random colors.
+    colors = np.random.rand(num_agents, 3)
+
+    return Scenario(positions, velocities, goals, colors)
+
+
+class Simulation:
+    def __init__(self, scenario):
+        self.num_agents = len(scenario.positions)
+        self.positions = wp.array(scenario.positions, dtype=wp.vec2)
+        self.velocities = wp.array(scenario.velocities, dtype=wp.vec2)
         self.accels = wp.zeros_like(self.positions)
 
-        self.goals = -self.positions
+        self.goals = wp.array(scenario.goals, dtype=wp.vec2)
 
         self.agent_radius = radius
 
@@ -194,7 +218,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     with wp.ScopedDevice(args.device):
-        example = Example(args.num_agents)
+        scenario = random_scenario(args.num_agents)
+        Simulation = Simulation(scenario)
         import matplotlib.patches as patches
         import matplotlib.animation as anim
         import matplotlib.pyplot as plt
@@ -209,15 +234,15 @@ if __name__ == '__main__':
         ax.set_aspect('equal') # Important for circles to appear round
 
         # Add circles as patches
-        for pi in example.positions.numpy():
-            c = np.random.rand(3,)
-            circle = patches.Circle(pi, radius=example.agent_radius, color=c)
+        for i, pi in enumerate(Simulation.positions.numpy()):
+            circle = patches.Circle(pi, radius=Simulation.agent_radius,
+                                    color=scenario.colors[i, :])
             ax.add_patch(circle)
             agents.append(circle)
 
         seq = anim.FuncAnimation(
             fig,
-            example.step_and_render_frame,
+            Simulation.step_and_render_frame,
             fargs=(agents,),
             frames=args.num_frames,
             blit=True,
