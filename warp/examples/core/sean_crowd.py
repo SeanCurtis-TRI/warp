@@ -1,5 +1,3 @@
-import math
-
 import numpy as np
 import warp as wp
 import warp.render
@@ -20,7 +18,7 @@ agent_scale = wp.constant(200.0)
 obstacle_scale = wp.constant(400.0)
 reaction_time = wp.constant(0.5)
 # Note: I've got 0.015 in Menge; this doesn't work well here. Not sure; don't care.
-force_distance = wp.constant(radius * 5)
+force_distance = wp.constant(radius * 10)
 
 
 @wp.func
@@ -137,20 +135,69 @@ def random_scenario(num_agents: int):
     # Initial positions randomly distributed through the domain.
     measure = min(domain_width, domain_height)
     positions = (np.random.rand(num_agents, 2) - 0.5) * measure
-
+    velocities = np.zeros_like(positions)
     goals = -positions
-
-    # Initial velocity for moving in a circle around the origin.
-    distances = np.sqrt(np.sum(positions**2, axis=1))
-    distances.shape = (-1, 1)
-    dirs = positions / distances
-    velocities = np.empty_like(positions)
-    velocities[:, 0] = dirs[:, 1]
-    velocities[:, 1] = -dirs[:, 0]
 
     # Random colors.
     colors = np.random.rand(num_agents, 3)
 
+    return Scenario(positions, velocities, goals, colors)
+
+
+def circle_scenario(num_agents: int):
+    R = min(domain_width, domain_height) * 0.5  - force_distance
+    max_agents = int(2 * np.pi * R / (2.5 * radius))
+    if num_agents > max_agents:
+        print(f"Warning: Reducing number of agents from {num_agents} to "
+              f"{max_agents} to fit in circle scenario.")
+        num_agents = max_agents
+
+    positions = np.empty((num_agents, 2), dtype=np.float32)
+    velocities = np.zeros_like(positions)
+    goals = np.empty_like(positions)
+    colors = np.empty((num_agents, 3), dtype=np.float32)
+
+    dtheta = 2.0 * np.pi / num_agents
+    for i in range(num_agents):
+        theta = i * dtheta
+        c = np.cos(theta)
+        s = np.sin(theta)
+        positions[i, 0] = R * c
+        positions[i, 1] = R * s
+        goals[i, :] = -positions[i, :]
+        colors[i, :] = np.array([c * 0.5 + 0.5, s * 0.5 + 0.5, 0.5])
+    return Scenario(positions, velocities, goals, colors)
+
+
+def four_blocks_scenario(num_agents: int):
+    print(f"Warning: Four blocks ignores the number of agents argument.")
+
+    num_agents = 100 # 4 blocks of 25 agents each.
+    positions = np.empty((num_agents, 2), dtype=np.float32)
+    velocities = np.empty_like(positions)
+    goals = np.empty_like(positions)
+    colors = np.empty((num_agents, 3), dtype=np.float32)
+
+    # Block measure is 3/4 of a quadrant.
+    w = domain_width * 0.5 * 0.75
+    dx = w / 4.0
+    p0 = domain_width * 0.5 * 0.125
+    quadrants = (
+        (p0, dx, p0, dx, (1, 0, 0)),  # Top right
+        (-p0, -dx, p0, dx, (0, 1, 0)),  # Top left
+        (-p0, -dx, -p0, -dx, (0, 0, 1)),  # Bottom left
+        (p0, dx, -p0, -dx, (1, 0, 1)),  # Bottom right
+    )
+    i = 0
+    for x0, dx, y0, dy, c in quadrants:
+         for ix in range(5):
+            for iy in range(5):
+                positions[i, 0] = x0 + ix * dx
+                positions[i, 1] = y0 + iy * dy
+                goals[i, :] = -positions[i, :]
+                velocities[i, :] = 0.0
+                colors[i, :] = c
+                i += 1
     return Scenario(positions, velocities, goals, colors)
 
 
@@ -181,7 +228,7 @@ class Simulation:
                                 sub_dt]
                 )
             v = self.velocities.numpy()
-            if (np.abs(v) < 5e-2).all():
+            if (np.abs(v) < 6e-2).all():
                 print("All agents stopped moving!")
                 return False
             else:
@@ -208,6 +255,11 @@ class Simulation:
 if __name__ == '__main__':
     import argparse
 
+    scenarios = {'random': random_scenario,
+                 'circle': circle_scenario,
+                 'four_blocks': four_blocks_scenario
+                 }
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--device', type=str, default=None,
                          help="Override the default Warp device.")
@@ -215,10 +267,13 @@ if __name__ == '__main__':
                         help="Total number of frames.")
     parser.add_argument('--num_agents', type=int, default=30,
                         help="Number of agents in the crowd.")
+    parser.add_argument('--scenario', type=str, choices=list(scenarios.keys()),
+                        default='circle',
+                        help=f"Choose a scenario: {', '.join(scenarios.keys())}")
     args = parser.parse_args()
 
     with wp.ScopedDevice(args.device):
-        scenario = random_scenario(args.num_agents)
+        scenario = scenarios[args.scenario](args.num_agents)
         Simulation = Simulation(scenario)
         import matplotlib.patches as patches
         import matplotlib.animation as anim
