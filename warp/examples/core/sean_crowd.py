@@ -6,7 +6,22 @@ import warp.render
 
 domain_width = wp.constant(20.0)
 domain_height = wp.constant(20.0)
-radius = wp.constant(0.2)
+
+# Common parameters
+radius = wp.constant(0.2)  # m
+neighbor_distance = wp.constant(5.0)  # m
+pref_speed = wp.constant(1.3)   # m/s
+max_speed = wp.constant(2.0)  # m/s
+
+# Helbing parameters
+mass = wp.constant(80.0)
+# The scales in Menge are 10X what they are here.
+agent_scale = wp.constant(200.0)
+obstacle_scale = wp.constant(400.0)
+reaction_time = wp.constant(0.5)
+# Note: I've got 0.015 in Menge; this doesn't work well here. Not sure; don't care.
+force_distance = wp.constant(radius * 5)
+
 
 @wp.func
 def compute_single_wall_force(p: wp.vec2, wall_pos: wp.vec2, wall_normal: wp.vec2):
@@ -16,9 +31,10 @@ def compute_single_wall_force(p: wp.vec2, wall_pos: wp.vec2, wall_normal: wp.vec
     dist = wp.dot(p - wall_pos, wall_normal)
 
     # TODO: This doesn't handle the case where the agent is within the wall.
-    obstacle_gain = 2.0
-    effect_radius = 4.0 * radius
-    return wall_normal * (obstacle_gain * wp.exp(radius - dist) / effect_radius)
+    # The force always points *out* of the half space, but the deeper they get
+    # the stronger the force becomes. It would be better to compute just the
+    # force necessary to accelerate it out of the wall.
+    return wall_normal * (obstacle_scale * wp.exp(radius - dist) / force_distance)
 
 
 @wp.func
@@ -36,15 +52,13 @@ def compute_wall_forces(p: wp.vec2):
 
 @wp.func
 def compute_single_agent_force(p: wp.vec2, q: wp.vec2):
-    """Computes the repulsive force on agent at position p due to another agent at position q."""
-    force_distance = 4.0 * radius
+    """Computes the repulsive force on agent at position p due to another agent
+    at position q."""
     r_QP = p - q
     dist_QP = wp.norm_l2(r_QP)
-    if dist_QP > force_distance or dist_QP < 1e-5:
+    if dist_QP > neighbor_distance or dist_QP < 1e-5:
         return wp.vec2(0.0, 0.0)
-    repulsion_gain = 1.0
-    effect_radius = 4.0 * radius
-    mag = repulsion_gain * wp.exp((2.0 * radius) - dist_QP) / effect_radius
+    mag = agent_scale * wp.exp((2.0 * radius) - dist_QP) / force_distance
     mag = min(mag, 1e5)
     return r_QP * (mag / dist_QP)
 
@@ -61,13 +75,14 @@ def compute_agent_forces(id: int, p: wp.array(dtype=wp.vec2)):
 
 
 @wp.func
-def compute_desired_velocity(p: wp.vec2, g: wp.vec2, desired_speed: float, dt: float):
-    """Computes the desired velocity vector for an agent at position p towards goal g."""
+def compute_desired_velocity(p: wp.vec2, g: wp.vec2, dt: float):
+    """Computes the desired velocity vector for an agent at position p towards
+    goal g."""
     to_goal = g - p
     dist_to_goal = wp.norm_l2(to_goal)
     if dist_to_goal < 1e-5:
         return wp.vec2(0.0, 0.0)
-    speed = min(desired_speed, dist_to_goal / dt)
+    speed = min(pref_speed, dist_to_goal / dt)
     desired_velocity = to_goal * (speed / dist_to_goal)
     return desired_velocity
 
@@ -77,10 +92,8 @@ def compute_driving_force(id: int, p: wp.array(dtype=wp.vec2),
                           v: wp.array(dtype=wp.vec2),
                           g: wp.array(dtype=wp.vec2), dt: float):
     """Computes the driving force for all agents towards their goals."""
-    pref_speed = 1.0
-    reaction_time = 0.5
-    v_pref = compute_desired_velocity(p[id], g[id], pref_speed, dt)
-    force = (v_pref - v[id]) / reaction_time  # Assuming unit mass here.
+    v_pref = compute_desired_velocity(p[id], g[id], dt)
+    force = mass * (v_pref - v[id]) / reaction_time  # Assuming unit mass here.
     return force
 
 @wp.kernel
@@ -90,10 +103,10 @@ def compute_accel(p: wp.array(dtype=wp.vec2), v: wp.array(dtype=wp.vec2),
     id = wp.tid()
     p0 = p[id]
     # We assume unit mass, so a = f / 1.0.
-    a_val = compute_wall_forces(p0)
-    a_val += compute_agent_forces(id, p)
-    a_val += compute_driving_force(id, p, v, g, dt)
-    a[id] = a_val
+    f = compute_wall_forces(p0)
+    f += compute_agent_forces(id, p)
+    f += compute_driving_force(id, p, v, g, dt)
+    a[id] = f / mass
 
 
 @wp.kernel
@@ -102,9 +115,10 @@ def integrate(p: wp.array(dtype=wp.vec2), v: wp.array(dtype=wp.vec2),
     id = wp.tid()
     p[id] += v[id] * dt
     v[id] += a[id] * dt
+    # Clamp speed; it doesn't get to accelerate indefinitely.
     new_speed = wp.norm_l2(v[id])
-    if new_speed > 2.0:
-        v[id] = v[id] * (2.0 / new_speed)
+    if new_speed > max_speed:
+        v[id] = v[id] * (max_speed / new_speed)
 
 
 class Example:
@@ -126,20 +140,28 @@ class Example:
         self.goals = -self.positions
 
         self.agent_radius = radius
-        self.desired_speed = 1.0
 
-        self.dt = 0.01
+        self.sub_steps = 25
+        self.dt = 0.001 * self.sub_steps  # Effectively dt = 0.001
 
     def step(self):
         with wp.ScopedTimer("step"):
-            wp.launch(compute_accel, dim=self.num_agents,
-                    inputs=[self.positions, self.velocities, self.accels, self.goals, self.dt])
-            wp.launch(integrate, dim=self.num_agents,
-                    inputs=[self.positions, self.velocities, self.accels,self.dt])
+            sub_dt = self.dt / self.sub_steps
+            for i in range(self.sub_steps):
+                wp.launch(compute_accel, dim=self.num_agents,
+                        inputs=[self.positions, self.velocities, self.accels,
+                                self.goals, sub_dt]
+                )
+                wp.launch(integrate, dim=self.num_agents,
+                        inputs=[self.positions, self.velocities, self.accels,
+                                sub_dt]
+                )
             v = self.velocities.numpy()
-            if (np.abs(v) < 1e-2).all():
+            if (np.abs(v) < 5e-2).all():
                 print("All agents stopped moving!")
                 return False
+            else:
+                print("Maximum speed componenent:", np.max(np.abs(v)))
         return True
 
     def step_and_render_frame(self, frame_num=None, agents=None):
