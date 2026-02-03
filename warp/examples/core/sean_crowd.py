@@ -5,19 +5,22 @@ import warp as wp
 import warp.render
 
 @wp.kernel
-def compute_vel(p: wp.array(dtype=wp.vec2), v: wp.array(dtype=wp.vec2)):
+def compute_accel(p: wp.array(dtype=wp.vec2), a: wp.array(dtype=wp.vec2)):
     id = wp.tid()
     p0 = p[id]
-    # For now, circle the origin (explicit integration should cause badness).
-    p0_hat = wp.normalize(p0)
-    speed = 1.3
-    v[id] = wp.vec2(-p0_hat.y, p0_hat.x) * speed
+    p_AO = wp.normalize(-p0)
+    # TODO: This should be distance-based agent-agent calculations
+    # TODO: Include agent-border calculations
+    # Currently, we accelerate towards the origin.
+    a[id] = p_AO * 0.5
 
 
 @wp.kernel
-def integrate(p: wp.array(dtype=wp.vec2), v: wp.array(dtype=wp.vec2), dt: float):
+def integrate(p: wp.array(dtype=wp.vec2), v: wp.array(dtype=wp.vec2),
+              a: wp.array(dtype=wp.vec2), dt: float):
     id = wp.tid()
     p[id] += v[id] * dt
+    v[id] += a[id] * dt
 
 
 class Example:
@@ -27,7 +30,14 @@ class Example:
         init_positions = np.random.rand(num_agents, 2) * 10.0 - 5
         self.positions = wp.array(init_positions, dtype=wp.vec2)
 
-        self.velocities = wp.zeros_like(self.positions)
+        distances = np.sqrt(np.sum(init_positions**2, axis=1))
+        distances.shape = (-1, 1)
+        dirs = init_positions / distances
+        init_velocities = np.empty_like(init_positions)
+        init_velocities[:, 0] = dirs[:, 1]
+        init_velocities[:, 1] = -dirs[:, 0]
+        self.velocities = wp.array(init_velocities, dtype=wp.vec2)
+        self.accels = wp.zeros_like(self.positions)
 
         self.agent_radius = 0.2
         self.desired_speed = 1.0
@@ -36,10 +46,10 @@ class Example:
 
     def step(self):
         with wp.ScopedTimer("step"):
-            wp.launch(compute_vel, dim=self.num_agents,
-                    inputs=[self.positions, self.velocities])
+            wp.launch(compute_accel, dim=self.num_agents,
+                    inputs=[self.positions, self.accels])
             wp.launch(integrate, dim=self.num_agents,
-                    inputs=[self.positions, self.velocities, self.dt])
+                    inputs=[self.positions, self.velocities, self.accels,self.dt])
 
     def step_and_render_frame(self, frame_num=None, agents=None):
         self.step()
