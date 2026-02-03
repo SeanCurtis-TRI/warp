@@ -60,13 +60,39 @@ def compute_agent_forces(id: int, p: wp.array(dtype=wp.vec2)):
     return force
 
 
+@wp.func
+def compute_desired_velocity(p: wp.vec2, g: wp.vec2, desired_speed: float, dt: float):
+    """Computes the desired velocity vector for an agent at position p towards goal g."""
+    to_goal = g - p
+    dist_to_goal = wp.norm_l2(to_goal)
+    if dist_to_goal < 1e-5:
+        return wp.vec2(0.0, 0.0)
+    speed = min(desired_speed, dist_to_goal / dt)
+    desired_velocity = to_goal * (speed / dist_to_goal)
+    return desired_velocity
+
+
+@wp.func
+def compute_driving_force(id: int, p: wp.array(dtype=wp.vec2),
+                          v: wp.array(dtype=wp.vec2),
+                          g: wp.array(dtype=wp.vec2), dt: float):
+    """Computes the driving force for all agents towards their goals."""
+    pref_speed = 1.0
+    reaction_time = 0.5
+    v_pref = compute_desired_velocity(p[id], g[id], pref_speed, dt)
+    force = (v_pref - v[id]) / reaction_time  # Assuming unit mass here.
+    return force
+
 @wp.kernel
-def compute_accel(p: wp.array(dtype=wp.vec2), a: wp.array(dtype=wp.vec2)):
+def compute_accel(p: wp.array(dtype=wp.vec2), v: wp.array(dtype=wp.vec2),
+                  a: wp.array(dtype=wp.vec2), g: wp.array(dtype=wp.vec2),
+                  dt: float):
     id = wp.tid()
     p0 = p[id]
     # We assume unit mass, so a = f / 1.0.
     a_val = compute_wall_forces(p0)
     a_val += compute_agent_forces(id, p)
+    a_val += compute_driving_force(id, p, v, g, dt)
     a[id] = a_val
 
 
@@ -97,20 +123,27 @@ class Example:
         self.velocities = wp.array(init_velocities, dtype=wp.vec2)
         self.accels = wp.zeros_like(self.positions)
 
+        self.goals = -self.positions
+
         self.agent_radius = radius
         self.desired_speed = 1.0
 
-        self.dt = 0.05
+        self.dt = 0.01
 
     def step(self):
         with wp.ScopedTimer("step"):
             wp.launch(compute_accel, dim=self.num_agents,
-                    inputs=[self.positions, self.accels])
+                    inputs=[self.positions, self.velocities, self.accels, self.goals, self.dt])
             wp.launch(integrate, dim=self.num_agents,
                     inputs=[self.positions, self.velocities, self.accels,self.dt])
+            v = self.velocities.numpy()
+            if (np.abs(v) < 1e-2).all():
+                print("All agents stopped moving!")
+                return False
+        return True
 
     def step_and_render_frame(self, frame_num=None, agents=None):
-        self.step()
+        running = self.step()
         
         # Update agent patches
         with wp.ScopedTimer("render"):
@@ -120,6 +153,9 @@ class Example:
                     pos = positions[i]
                     agent.center = (pos[0], pos[1])
 
+        if not running:
+            global seq
+            seq.event_source.stop()
         return agents
 
 
@@ -163,7 +199,7 @@ if __name__ == '__main__':
             fargs=(agents,),
             frames=args.num_frames,
             blit=True,
-            interval=8,
+            interval=1,
         )
 
         plt.show()
