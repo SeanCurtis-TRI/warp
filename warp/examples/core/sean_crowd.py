@@ -23,6 +23,7 @@ force_distance = wp.constant(radius * 10)
 # Density field
 field_width = wp.constant(128)
 field_height = wp.constant(128)
+cell_area = wp.constant((domain_width * domain_height) / (field_width * field_height))
 
 
 @wp.func
@@ -158,6 +159,26 @@ def update_circle_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype=floa
         dist_sq = wp.length_sq(pos - c)
         if dist_sq <= support_sq:
             rho[j, i] += norm
+
+
+@wp.kernel
+def update_first_order_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype=float)):
+    i, j = wp.tid()
+    rho[j, i] = 0.0
+    cx = (float(i) + 0.5) * domain_width / float(field_width) - (domain_width * 0.5)
+    cy = (float(j) + 0.5) * domain_height / float(field_height) - (domain_height * 0.5)
+    c = wp.vec2(cx, cy)
+    rho_support = 2.0 # radius of circlular base, m.
+    support_sq = rho_support * rho_support
+    cone_vol = np.pi * support_sq * rho_support / 3.0
+    norm = 1.0 / cone_vol
+    cell_population = cell_area * norm
+    for a in range(len(p)):
+        pos = p[a]
+        dist_sq = wp.length_sq(pos - c)
+        if dist_sq <= support_sq:
+            dist = rho_support -wp.sqrt(dist_sq)
+            rho[j, i] += dist * cell_population
 
 
 class Scenario:
@@ -303,7 +324,9 @@ class Simulation:
         if density_img:
             with wp.ScopedTimer("density"):
                 self.update_density()
-                density_img.set_array(self.density.numpy())
+                rho = self.density.numpy()
+                density_img.set_array(rho)
+                print(f"Total population = {rho.sum():.2f}")
 
         if not running:
             global seq
@@ -317,6 +340,7 @@ if __name__ == '__main__':
     kernels = {
         'box': update_block_density,
         'circle': update_circle_density,
+        'first_order': update_first_order_density,
     }
 
     scenarios = {'random': random_scenario,
