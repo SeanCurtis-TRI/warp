@@ -134,7 +134,7 @@ def update_block_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype=float
     rho_support = 4.0  # length of block side, m.
     kSize = int(rho_support * float(field_width) / domain_width + 0.5)
     kDelta = kSize // 2
-    cell_population = cell_area / float(rho_support * rho_support)
+    cell_population = 1.0 / float(rho_support * rho_support)
     for a in range(len(p)):
         pos = p[a]
         # Map position to field coordinates.
@@ -153,7 +153,7 @@ def update_circle_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype=floa
     c = wp.vec2(cx, cy)
     rho_support = 2.0 # radius of circle, m.
     support_sq = rho_support * rho_support
-    cell_population = cell_area / (np.pi * support_sq)
+    cell_population = 1.0 / (np.pi * support_sq)
     for a in range(len(p)):
         pos = p[a]
         dist_sq = wp.length_sq(pos - c)
@@ -172,13 +172,12 @@ def update_first_order_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype
     support_sq = rho_support * rho_support
     cone_vol = np.pi * support_sq * rho_support / 3.0
     norm = 1.0 / cone_vol
-    cell_population = cell_area * norm
     for a in range(len(p)):
         pos = p[a]
         dist_sq = wp.length_sq(pos - c)
         if dist_sq <= support_sq:
             dist = rho_support -wp.sqrt(dist_sq)
-            rho[j, i] += dist * cell_population
+            rho[j, i] += dist * norm
 
 
 class Scenario:
@@ -326,7 +325,7 @@ class Simulation:
                 self.update_density()
                 rho = self.density.numpy()
                 density_img.set_array(rho)
-                print(f"Total population = {rho.sum():.2f}")
+                print(f"Total population = {(cell_area * rho.sum()):.2f}")
 
         if not running:
             global seq
@@ -383,7 +382,7 @@ if __name__ == '__main__':
             animated=True,
             interpolation="antialiased",
         )
-        img.set_norm(matplotlib.colors.Normalize(0.0, 6.0))
+        img.set_norm(matplotlib.colors.Normalize(0.0, 3))
         plt.colorbar(img, label='ρ (people/m²)')
 
         # Change the axis ticks to be simulation world coordinates.
