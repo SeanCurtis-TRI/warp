@@ -167,6 +167,7 @@ class Scenario:
         self.velocities = velocities
         self.goals = goals
         self.colors = colors
+        self.density_kernel = update_block_density
 
 # Functions for creating the initial conditions of scenarios. Each returns
 # initial positions, velocities, goals, and per-agent colors.
@@ -252,6 +253,7 @@ class Simulation:
 
         self.agent_radius = radius
 
+        self.density_kernel = scenario.density_kernel
         self.density = wp.zeros((field_width, field_height), dtype=float)
 
         self.sub_steps = 25
@@ -276,7 +278,7 @@ class Simulation:
         return True
 
     def update_density(self):
-        wp.launch(update_circle_density, dim=(field_width, field_height),
+        wp.launch(self.density_kernel, dim=(field_width, field_height),
                   inputs=[self.positions, self.density])
 
     def map_to_field(self, p):
@@ -312,6 +314,11 @@ class Simulation:
 if __name__ == '__main__':
     import argparse
 
+    kernels = {
+        'box': update_block_density,
+        'circle': update_circle_density,
+    }
+
     scenarios = {'random': random_scenario,
                  'circle': circle_scenario,
                  'four_blocks': four_blocks_scenario
@@ -327,6 +334,9 @@ if __name__ == '__main__':
     parser.add_argument('--scenario', type=str, choices=list(scenarios.keys()),
                         default='circle',
                         help=f"Choose a scenario: {', '.join(scenarios.keys())}")
+    parser.add_argument('--density', type=str, choices=list(kernels.keys()),
+                        default='first_order',
+                        help=f"Choose a density-field kernel: {', '.join(kernels.keys())}")
     args = parser.parse_args()
 
     with wp.ScopedDevice(args.device):
@@ -336,6 +346,7 @@ if __name__ == '__main__':
         import matplotlib.pyplot as plt
 
         scenario = scenarios[args.scenario](args.num_agents)
+        scenario.density_kernel = kernels[args.density]
         sim = Simulation(scenario)
 
         agents = []
