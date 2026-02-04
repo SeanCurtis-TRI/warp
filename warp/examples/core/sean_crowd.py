@@ -105,7 +105,7 @@ def compute_single_agent_force(p: wp.vec3, q: wp.vec3):
 
 
 @wp.func
-def compute_agent_forces(gid: int, p: wp.array(dtype=wp.vec3), grid: wp.uint64):
+def compute_agent_forces_grid(gid: int, p: wp.array(dtype=wp.vec3), grid: wp.uint64):
     force = wp.vec3(0.0, 0.0, 0.0)
     neighbors = wp.hash_grid_query(grid, p[gid], neighbor_distance)
     # for i in range(len(p)):
@@ -113,6 +113,15 @@ def compute_agent_forces(gid: int, p: wp.array(dtype=wp.vec3), grid: wp.uint64):
         if index != gid:
             force += compute_single_agent_force(p[gid], p[index])
 
+    return force
+
+
+@wp.func
+def compute_agent_forces(id: int, p: wp.array(dtype=wp.vec3)):
+    force = wp.vec3(0.0, 0.0, 0.0)
+    for i in range(len(p)):
+        if i != id:
+            force += compute_single_agent_force(p[id], p[i])
     return force
 
 
@@ -140,15 +149,27 @@ def compute_driving_force(id: int, p: wp.array(dtype=wp.vec3),
 
 
 @wp.kernel
-def compute_accel(p: wp.array(dtype=wp.vec3), v: wp.array(dtype=wp.vec3),
+def compute_accel_grid(p: wp.array(dtype=wp.vec3), v: wp.array(dtype=wp.vec3),
                   a: wp.array(dtype=wp.vec3), g: wp.array(dtype=wp.vec3),
                   dt: float, grid: wp.uint64):
     tid = wp.tid()
     id = wp.hash_grid_point_id(grid, tid)
     p0 = p[id]
+    f = compute_wall_forces(p0)
+    f += compute_agent_forces_grid(id, p, grid)
+    f += compute_driving_force(id, p, v, g, dt)
+    a[id] = f / mass
+
+
+@wp.kernel
+def compute_accel(p: wp.array(dtype=wp.vec3), v: wp.array(dtype=wp.vec3),
+                  a: wp.array(dtype=wp.vec3), g: wp.array(dtype=wp.vec3),
+                  dt: float):
+    id = wp.tid()
+    p0 = p[id]
     # We assume unit mass, so a = f / 1.0.
     f = compute_wall_forces(p0)
-    f += compute_agent_forces(id, p, grid)
+    f += compute_agent_forces(id, p)
     f += compute_driving_force(id, p, v, g, dt)
     a[id] = f / mass
 
@@ -334,7 +355,7 @@ def four_blocks_scenario(num_agents: int):
 
 
 class Simulation:
-    def __init__(self, scenario: Scenario, timing: bool = False, stop_speed: float = 0.06):
+    def __init__(self, scenario: Scenario, use_grid: bool, timing: bool = False, stop_speed: float = 0.06):
         self.num_agents = len(scenario.positions)
         self.positions = wp.array(scenario.positions, dtype=wp.vec3)
         self.velocities = wp.array(scenario.velocities, dtype=wp.vec3)
@@ -342,9 +363,11 @@ class Simulation:
 
         self.goals = wp.array(scenario.goals, dtype=wp.vec3)
 
-        grid_rez = 32
-        self.grid = wp.HashGrid(grid_rez, grid_rez, 1)
-        self.grid_cell_size = domain_size / grid_rez
+        self.use_grid = use_grid
+        if self.use_grid:
+            grid_rez = 32
+            self.grid = wp.HashGrid(grid_rez, grid_rez, 1)
+            self.grid_cell_size = domain_size / grid_rez
 
         self.agent_radius = radius
 
@@ -380,11 +403,18 @@ class Simulation:
         with wp.ScopedTimer("step", active=self.show_timings):
             sub_dt = self.dt / self.sub_steps
             for i in range(self.sub_steps):
-                self.grid.build(self.positions, self.grid_cell_size)
-                wp.launch(compute_accel, dim=self.num_agents,
-                        inputs=[self.positions, self.velocities, self.accels,
-                                self.goals, sub_dt, self.grid.id]
-                )
+                if self.use_grid:
+                    self.grid.build(self.positions, self.grid_cell_size)
+                    wp.launch(compute_accel_grid, dim=self.num_agents,
+                            inputs=[self.positions, self.velocities, self.accels,
+                                    self.goals, sub_dt, self.grid.id]
+                    )
+                else:
+                    wp.launch(compute_accel, dim=self.num_agents,
+                            inputs=[self.positions, self.velocities, self.accels,
+                                    self.goals, sub_dt]
+                    )
+
                 wp.launch(integrate, dim=self.num_agents,
                         inputs=[self.positions, self.velocities, self.accels,
                                 sub_dt]
@@ -466,6 +496,8 @@ if __name__ == '__main__':
                         help="Enable timing output.")
     parser.add_argument('--stop-speed', type=float, default=0.06,
                         help="Speed below which agents are considered stopped.")
+    parser.add_argument('--use_grid', action='store_true',
+                        help="Use a spatial hash grid for neighbor queries.")
     # Simulation constants.
     constants = (
         ('domain_size', float, domain_size, 'The size of the square simulation domain in meters'),
@@ -496,7 +528,7 @@ if __name__ == '__main__':
 
         scenario = scenarios[args.scenario](args.num_agents)
         scenario.density_kernel = kernels[args.density]
-        sim = Simulation(scenario, args.timing, args.stop_speed)
+        sim = Simulation(scenario, args.use_grid, args.timing, args.stop_speed)
 
         agents = []
 
