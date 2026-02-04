@@ -134,7 +134,7 @@ def update_block_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype=float
     rho_support = 4.0  # length of block side, m.
     kSize = int(rho_support * float(field_width) / domain_width + 0.5)
     kDelta = kSize // 2
-    norm = 1.0 / float(rho_support * rho_support)
+    cell_population = cell_area / float(rho_support * rho_support)
     for a in range(len(p)):
         pos = p[a]
         # Map position to field coordinates.
@@ -142,7 +142,7 @@ def update_block_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype=float
         y = int(((pos.y + (domain_height * 0.5)) / domain_height) * fh + 0.5)
         # Splat each agent into a kxk block.
         if x >= i - kDelta and x <= i + kDelta and y >= j - kDelta and y <= j + kDelta:
-            rho[j, i] += norm
+            rho[j, i] += cell_population
 
 @wp.kernel
 def update_circle_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype=float)):
@@ -153,12 +153,12 @@ def update_circle_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype=floa
     c = wp.vec2(cx, cy)
     rho_support = 2.0 # radius of circle, m.
     support_sq = rho_support * rho_support
-    norm = 1.0 / (np.pi * support_sq)
+    cell_population = cell_area / (np.pi * support_sq)
     for a in range(len(p)):
         pos = p[a]
         dist_sq = wp.length_sq(pos - c)
         if dist_sq <= support_sq:
-            rho[j, i] += norm
+            rho[j, i] += cell_population
 
 
 @wp.kernel
