@@ -105,12 +105,13 @@ def compute_single_agent_force(p: wp.vec3, q: wp.vec3):
 
 
 @wp.func
-def compute_agent_forces(id: int, p: wp.array(dtype=wp.vec3)):
+def compute_agent_forces(gid: int, p: wp.array(dtype=wp.vec3), grid: wp.uint64):
     force = wp.vec3(0.0, 0.0, 0.0)
-    for i in range(len(p)):
-        if i == id:
-            continue
-        force += compute_single_agent_force(p[id], p[i])
+    neighbors = wp.hash_grid_query(grid, p[gid], neighbor_distance)
+    # for i in range(len(p)):
+    for index in neighbors:
+        if index != gid:
+            force += compute_single_agent_force(p[gid], p[index])
 
     return force
 
@@ -141,12 +142,13 @@ def compute_driving_force(id: int, p: wp.array(dtype=wp.vec3),
 @wp.kernel
 def compute_accel(p: wp.array(dtype=wp.vec3), v: wp.array(dtype=wp.vec3),
                   a: wp.array(dtype=wp.vec3), g: wp.array(dtype=wp.vec3),
-                  dt: float):
-    id = wp.tid()
+                  dt: float, grid: wp.uint64):
+    tid = wp.tid()
+    id = wp.hash_grid_point_id(grid, tid)
     p0 = p[id]
     # We assume unit mass, so a = f / 1.0.
     f = compute_wall_forces(p0)
-    f += compute_agent_forces(id, p)
+    f += compute_agent_forces(id, p, grid)
     f += compute_driving_force(id, p, v, g, dt)
     a[id] = f / mass
 
@@ -340,6 +342,10 @@ class Simulation:
 
         self.goals = wp.array(scenario.goals, dtype=wp.vec3)
 
+        grid_rez = 32
+        self.grid = wp.HashGrid(grid_rez, grid_rez, 1)
+        self.grid_cell_size = domain_size / grid_rez
+
         self.agent_radius = radius
 
         self.density_kernel = scenario.density_kernel
@@ -374,9 +380,10 @@ class Simulation:
         with wp.ScopedTimer("step", active=self.show_timings):
             sub_dt = self.dt / self.sub_steps
             for i in range(self.sub_steps):
+                self.grid.build(self.positions, self.grid_cell_size)
                 wp.launch(compute_accel, dim=self.num_agents,
                         inputs=[self.positions, self.velocities, self.accels,
-                                self.goals, sub_dt]
+                                self.goals, sub_dt, self.grid.id]
                 )
                 wp.launch(integrate, dim=self.num_agents,
                         inputs=[self.positions, self.velocities, self.accels,
@@ -453,7 +460,7 @@ if __name__ == '__main__':
                         default='circle',
                         help=f"Choose a scenario: {', '.join(scenarios.keys())}")
     parser.add_argument('--density', type=str, choices=list(kernels.keys()),
-                        default='first_order',
+                        default='gauss',
                         help=f"Choose a density-field kernel: {', '.join(kernels.keys())}")
     parser.add_argument('--timing', action='store_true',
                         help="Enable timing output.")
