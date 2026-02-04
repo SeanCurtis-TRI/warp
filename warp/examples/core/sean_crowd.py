@@ -181,6 +181,33 @@ def update_first_order_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype
             rho[j, i] += dist * norm
 
 
+@wp.kernel
+def update_gauss_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype=float)):
+    i, j = wp.tid()
+    rho[j, i] = 0.0
+    cx = (float(i) + 0.5) * domain_width / float(field_width) - (domain_width * 0.5)
+    cy = (float(j) + 0.5) * domain_height / float(field_height) - (domain_height * 0.5)
+    c = wp.vec2(cx, cy)
+    rho_support = rho_kernel_size / 2.0
+    support_sq = rho_support * rho_support
+    sigma = rho_support / 3.0
+    # A *normalized* gaussian function in 2D, integrated over all space is 1.
+    # Integrated over a circle of radius 3σ is ~0.9889. We'll include the
+    # scale factor and the normalization factor together.
+    # A 2D gaussian function integrated on a circle of radius 3sigma has an
+    # integral of 0.9889. So, we'll hard-code it here and normalize. We could
+    # probably get away without doing it, but one more multiplication per
+    # agent is not going to hurt.
+    two_sigma_sq = 2.0 * sigma * sigma
+    norm = 1.0 / (0.9889 * two_sigma_sq * np.pi)
+    for a in range(len(p)):
+        pos = p[a]
+        dist_sq = wp.length_sq(pos - c)
+        if dist_sq <= support_sq:
+            val = wp.exp(-dist_sq / two_sigma_sq)
+            rho[j, i] += val * norm
+
+
 class Scenario:
     def __init__(self, positions, velocities, goals, colors):
         assert len(positions) == len(velocities) == len(goals) == len(colors)
@@ -341,11 +368,12 @@ if __name__ == '__main__':
         'box': update_box_density,
         'circle': update_circle_density,
         'first_order': update_first_order_density,
+        'gauss': update_gauss_density,
     }
 
     scenarios = {'random': random_scenario,
                  'circle': circle_scenario,
-                 'four_blocks': four_blocks_scenario
+                 'four_blocks': four_blocks_scenario,
                  }
 
     parser = argparse.ArgumentParser()
