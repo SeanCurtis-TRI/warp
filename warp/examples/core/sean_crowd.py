@@ -127,7 +127,7 @@ def integrate(p: wp.array(dtype=wp.vec2), v: wp.array(dtype=wp.vec2),
 
 
 @wp.kernel
-def update_block_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype=float)):
+def update_box_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype=float)):
     i, j = wp.tid()
     rho[j, i] = 0.0
     fw = float(field_width)
@@ -188,7 +188,7 @@ class Scenario:
         self.velocities = velocities
         self.goals = goals
         self.colors = colors
-        self.density_kernel = update_block_density
+        self.density_kernel = update_box_density
 
 # Functions for creating the initial conditions of scenarios. Each returns
 # initial positions, velocities, goals, and per-agent colors.
@@ -338,7 +338,7 @@ if __name__ == '__main__':
     import argparse
 
     kernels = {
-        'box': update_block_density,
+        'box': update_box_density,
         'circle': update_circle_density,
         'first_order': update_first_order_density,
     }
