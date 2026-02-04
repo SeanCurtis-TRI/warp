@@ -350,10 +350,14 @@ if __name__ == '__main__':
         )
         img.set_norm(matplotlib.colors.Normalize(0.0, 6.0))
         plt.colorbar(img, label='ρ (people/m²)')
-        # half_width = domain_width * 0.5
-        # half_height = domain_height * 0.5
-        # ax.set_xlim(-half_width, half_width)
-        # ax.set_ylim(-half_height, half_height)
+
+        # Change the axis ticks to be simulation world coordinates.
+        x_ticks = [0, field_width * 0.25, field_width * 0.5, field_width * 0.75, field_width]
+        x_labels = [-domain_width * 0.5, -domain_width * 0.25, 0.0, domain_width * 0.25, domain_width * 0.5]
+        ax.set_xticks(x_ticks, x_labels)
+        y_ticks = [0, field_height * 0.25, field_height * 0.5, field_height * 0.75, field_height]
+        y_labels = [-domain_height * 0.5, -domain_height * 0.25, 0.0, domain_height * 0.25, domain_height * 0.5]
+        ax.set_yticks(y_ticks, y_labels)
         ax.set_aspect('equal') # Important for circles to appear round
 
         # Add circles as patches.
