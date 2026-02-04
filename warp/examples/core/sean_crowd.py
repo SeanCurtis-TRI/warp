@@ -145,6 +145,7 @@ def update_box_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype=float))
         if x >= i - kDelta and x <= i + kDelta and y >= j - kDelta and y <= j + kDelta:
             rho[j, i] += cell_population
 
+
 @wp.kernel
 def update_circle_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype=float)):
     i, j = wp.tid()
@@ -389,7 +390,11 @@ if __name__ == '__main__':
     parser.add_argument('--density', type=str, choices=list(kernels.keys()),
                         default='first_order',
                         help=f"Choose a density-field kernel: {', '.join(kernels.keys())}")
+    parser.add_argument('--density_size', type=float, default=4.0,
+                        help="The width of the density kernel support in meters")
     args = parser.parse_args()
+    rho_kernel_size = wp.constant(args.density_size)
+
 
     with wp.ScopedDevice(args.device):
         import matplotlib
