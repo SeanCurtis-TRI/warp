@@ -24,6 +24,7 @@ force_distance = wp.constant(radius * 10)
 field_width = wp.constant(128)
 field_height = wp.constant(128)
 cell_area = wp.constant((domain_width * domain_height) / (field_width * field_height))
+rho_kernel_size = wp.constant(4.0)  # in meters (the measure of the compact support of the density kernel.)
 
 
 @wp.func
@@ -131,7 +132,7 @@ def update_block_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype=float
     rho[j, i] = 0.0
     fw = float(field_width)
     fh = float(field_height)
-    rho_support = 4.0  # length of block side, m.
+    rho_support = rho_kernel_size
     kSize = int(rho_support * float(field_width) / domain_width + 0.5)
     kDelta = kSize // 2
     cell_population = 1.0 / float(rho_support * rho_support)
@@ -151,7 +152,7 @@ def update_circle_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype=floa
     cx = (float(i) + 0.5) * domain_width / float(field_width) - (domain_width * 0.5)
     cy = (float(j) + 0.5) * domain_height / float(field_height) - (domain_height * 0.5)
     c = wp.vec2(cx, cy)
-    rho_support = 2.0 # radius of circle, m.
+    rho_support = rho_kernel_size / 2.0
     support_sq = rho_support * rho_support
     cell_population = 1.0 / (np.pi * support_sq)
     for a in range(len(p)):
@@ -168,7 +169,7 @@ def update_first_order_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype
     cx = (float(i) + 0.5) * domain_width / float(field_width) - (domain_width * 0.5)
     cy = (float(j) + 0.5) * domain_height / float(field_height) - (domain_height * 0.5)
     c = wp.vec2(cx, cy)
-    rho_support = 2.0 # radius of circlular base, m.
+    rho_support = rho_kernel_size / 2.0
     support_sq = rho_support * rho_support
     cone_vol = np.pi * support_sq * rho_support / 3.0
     norm = 1.0 / cone_vol
