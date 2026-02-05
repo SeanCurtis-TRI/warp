@@ -353,11 +353,24 @@ class Simulation:
         # steps).
         self.sub_steps = 50
         self.dt = 0.001 * self.sub_steps  # For each solve, dt = 0.001.
+        self.step_count = 0
 
         self.show_timings = timing
         self.stop_speed = stop_speed
 
+    def validate_state(self, i: int):
+        v = self.velocities.numpy()
+        speeds = np.linalg.norm(v[:, :2], axis=1)
+        if not (speeds.max() <= max_speed * 1.1):
+            raise RuntimeError(
+                        f"Warning: Step {self.step_count}.{i}: "
+                        f"speed {speeds.max():.2f} is invalid. Should lie in "
+                        f"the range [0, {max_speed:.2f}]! "
+                        "Consider reducing dt or increasing max_speed.")
+
     def step(self):
+        self.step_count += 1
+        self.validate_state(-1)
         with wp.ScopedTimer("step", active=self.show_timings):
             sub_dt = self.dt / self.sub_steps
             for i in range(self.sub_steps):
@@ -369,6 +382,7 @@ class Simulation:
                         inputs=[self.positions, self.velocities, self.accels,
                                 sub_dt]
                 )
+                self.validate_state(i)
             v = self.velocities.numpy()
             if (np.abs(v) < self.stop_speed).all():
                 print("All agents stopped moving!")
