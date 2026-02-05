@@ -2,7 +2,7 @@ import numpy as np
 import warp as wp
 import warp.render
 
-domain_size = wp.constant(120.0)
+domain_size = wp.constant(20.0)
 
 # Common parameters
 radius = wp.constant(0.2)  # m
@@ -16,7 +16,9 @@ agent_scale = wp.constant(2000.0)
 obstacle_scale = wp.constant(4000.0)
 reaction_time = wp.constant(0.5)
 # In Menge, this is hard-coded as 0.015, which is 3/4 of default radius.
-force_distance = wp.constant(radius * 0.75)
+# However, 0.5 radius seems to get me tighter crowds (with a 1e-3 time step,
+# that seems alright).
+force_distance = wp.constant(radius * 0.5)
 
 # Density field
 field_resolution = wp.constant(128)
@@ -341,8 +343,14 @@ class Simulation:
         self.density_kernel = scenario.density_kernel
         self.density = wp.zeros((field_resolution, field_resolution), dtype=float)
 
-        self.sub_steps = 25
-        self.dt = 0.001 * self.sub_steps  # Effectively dt = 0.001
+        # TODO: Consider setting dt and inferring the number of substeps so
+        # that the solve gets a value on the order of 0.001. That might be more
+        # intuitive.
+        # Note: the bigger the number of substeps, the faster things go,
+        # because we do fewer density field computations (one for ever N sub
+        # steps).
+        self.sub_steps = 50
+        self.dt = 0.001 * self.sub_steps  # For each solve, dt = 0.001.
 
         self.show_timings = timing
         self.stop_speed = stop_speed
@@ -477,7 +485,7 @@ if __name__ == '__main__':
             animated=True,
             interpolation="antialiased",
         )
-        img.set_norm(matplotlib.colors.Normalize(0.0, 3))
+        img.set_norm(matplotlib.colors.Normalize(0.0, 6.0))
         plt.colorbar(img, label='ρ (people/m²)')
 
         # Change the axis ticks to be simulation world coordinates.
