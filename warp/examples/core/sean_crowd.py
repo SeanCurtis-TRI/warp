@@ -34,7 +34,7 @@ def compute_single_wall_force(p: wp.vec2, wall_pos: wp.vec2, wall_normal: wp.vec
     # The force always points *out* of the half space, but the deeper they get
     # the stronger the force becomes. It would be better to compute just the
     # force necessary to accelerate it out of the wall.
-    return wall_normal * (obstacle_scale * wp.exp(radius - dist) / force_distance)
+    return wall_normal * (obstacle_scale * wp.exp((radius - dist) / force_distance))
 
 
 @wp.func
@@ -58,7 +58,7 @@ def compute_single_agent_force(p: wp.vec2, q: wp.vec2):
     dist_QP = wp.norm_l2(r_QP)
     if dist_QP > neighbor_distance or dist_QP < 1e-5:
         return wp.vec2(0.0, 0.0)
-    mag = agent_scale * wp.exp((2.0 * radius) - dist_QP) / force_distance
+    mag = agent_scale * wp.exp(((2.0 * radius) - dist_QP) / force_distance)
     mag = min(mag, 1e5)
     return r_QP * (mag / dist_QP)
 
