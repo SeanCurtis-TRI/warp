@@ -23,6 +23,11 @@ field_resolution = wp.constant(128)
 cell_area = wp.constant((domain_size * domain_size) / (field_resolution * field_resolution))
 rho_kernel_size = wp.constant(4.0)  # in meters (the measure of the compact support of the density kernel.)
 
+# Some weird race condition can cause the step to evaluate without the sequence
+# actually being created. So, we'll make sure the global exists and test for
+# its definition below.
+seq = None
+
 def configure_constants(**kwargs):
     global domain_size
     global radius, neighbor_distance, pref_speed, max_speed
@@ -393,7 +398,8 @@ class Simulation:
 
         if not running:
             global seq
-            seq.event_source.stop()
+            if seq is not None:
+                seq.event_source.stop()
         return agents + [density_img]
 
 
