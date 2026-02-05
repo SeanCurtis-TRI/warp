@@ -2,8 +2,7 @@ import numpy as np
 import warp as wp
 import warp.render
 
-domain_width = wp.constant(20.0)
-domain_height = wp.constant(20.0)
+domain_size = wp.constant(120.0)
 
 # Common parameters
 radius = wp.constant(0.2)  # m
@@ -21,11 +20,43 @@ reaction_time = wp.constant(0.5)
 force_distance = wp.constant(radius * 10)
 
 # Density field
-field_width = wp.constant(128)
-field_height = wp.constant(128)
-cell_area = wp.constant((domain_width * domain_height) / (field_width * field_height))
+field_resolution = wp.constant(128)
+cell_area = wp.constant((domain_size * domain_size) / (field_resolution * field_resolution))
 rho_kernel_size = wp.constant(4.0)  # in meters (the measure of the compact support of the density kernel.)
 
+def configure_constants(**kwargs):
+    global domain_size
+    global radius, neighbor_distance, pref_speed, max_speed
+    global mass, agent_scale, obstacle_scale, reaction_time, force_distance
+    global field_resolution, cell_area, rho_kernel_size
+
+    for key, value in kwargs.items():
+        if key == 'domain_size':
+            domain_size = wp.constant(value)
+        elif key == 'radius':
+            radius = wp.constant(value)
+        elif key == 'neighbor_distance':
+            neighbor_distance = wp.constant(value)
+        elif key == 'pref_speed':
+            pref_speed = wp.constant(value)
+        elif key == 'max_speed':
+            max_speed = wp.constant(value)
+        elif key == 'mass':
+            mass = wp.constant(value)
+        elif key == 'agent_scale':
+            agent_scale = wp.constant(value)
+        elif key == 'obstacle_scale':
+            obstacle_scale = wp.constant(value)
+        elif key == 'reaction_time':
+            reaction_time = wp.constant(value)
+        elif key == 'force_distance':
+            force_distance = wp.constant(value)
+        elif key == 'field_resolution':
+            field_resolution = wp.constant(value)
+        elif key == 'rho_kernel_size':
+            rho_kernel_size = wp.constant(value)
+
+    cell_area = wp.constant((domain_size * domain_size) / (field_resolution * field_resolution))
 
 @wp.func
 def compute_single_wall_force(p: wp.vec2, wall_pos: wp.vec2, wall_normal: wp.vec2):
@@ -43,13 +74,13 @@ def compute_single_wall_force(p: wp.vec2, wall_pos: wp.vec2, wall_normal: wp.vec
 
 @wp.func
 def compute_wall_forces(p: wp.vec2):
-    force = compute_single_wall_force(p, wp.vec2(-domain_width * 0.5, 0.0),
+    force = compute_single_wall_force(p, wp.vec2(-domain_size * 0.5, 0.0),
                                       wp.vec2(1.0, 0.0))
-    force += compute_single_wall_force(p, wp.vec2(domain_width * 0.5, 0.0),
+    force += compute_single_wall_force(p, wp.vec2(domain_size * 0.5, 0.0),
                                        wp.vec2(-1.0, 0.0))
-    force += compute_single_wall_force(p, wp.vec2(0.0, -domain_height * 0.5),
+    force += compute_single_wall_force(p, wp.vec2(0.0, -domain_size * 0.5),
                                        wp.vec2(0.0, 1.0))
-    force += compute_single_wall_force(p, wp.vec2(0.0, domain_height * 0.5),
+    force += compute_single_wall_force(p, wp.vec2(0.0, domain_size * 0.5),
                                        wp.vec2(0.0, -1.0))
     return force
 
@@ -130,17 +161,16 @@ def integrate(p: wp.array(dtype=wp.vec2), v: wp.array(dtype=wp.vec2),
 def update_box_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype=float)):
     i, j = wp.tid()
     rho[j, i] = 0.0
-    fw = float(field_width)
-    fh = float(field_height)
     rho_support = rho_kernel_size
-    kSize = int(rho_support * float(field_width) / domain_width + 0.5)
+    kSize = int(rho_support * float(field_resolution) / domain_size + 0.5)
+    field_size = float(field_resolution)
     kDelta = kSize // 2
     cell_population = 1.0 / float(rho_support * rho_support)
     for a in range(len(p)):
         pos = p[a]
         # Map position to field coordinates.
-        x = int(((pos.x + (domain_width * 0.5)) / domain_width) * fw + 0.5)
-        y = int(((pos.y + (domain_height * 0.5)) / domain_height) * fh + 0.5)
+        x = int(((pos.x + (domain_size * 0.5)) / domain_size) * field_size + 0.5)
+        y = int(((pos.y + (domain_size * 0.5)) / domain_size) * field_size + 0.5)
         # Splat each agent into a kxk block.
         if x >= i - kDelta and x <= i + kDelta and y >= j - kDelta and y <= j + kDelta:
             rho[j, i] += cell_population
@@ -150,8 +180,9 @@ def update_box_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype=float))
 def update_circle_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype=float)):
     i, j = wp.tid()
     rho[j, i] = 0.0
-    cx = (float(i) + 0.5) * domain_width / float(field_width) - (domain_width * 0.5)
-    cy = (float(j) + 0.5) * domain_height / float(field_height) - (domain_height * 0.5)
+    field_size = float(field_resolution)
+    cx = (float(i) + 0.5) * domain_size / field_size - (domain_size * 0.5)
+    cy = (float(j) + 0.5) * domain_size / field_size - (domain_size * 0.5)
     c = wp.vec2(cx, cy)
     rho_support = rho_kernel_size / 2.0
     support_sq = rho_support * rho_support
@@ -167,8 +198,9 @@ def update_circle_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype=floa
 def update_first_order_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype=float)):
     i, j = wp.tid()
     rho[j, i] = 0.0
-    cx = (float(i) + 0.5) * domain_width / float(field_width) - (domain_width * 0.5)
-    cy = (float(j) + 0.5) * domain_height / float(field_height) - (domain_height * 0.5)
+    field_size = float(field_resolution)
+    cx = (float(i) + 0.5) * domain_size / field_size - (domain_size * 0.5)
+    cy = (float(j) + 0.5) * domain_size / field_size - (domain_size * 0.5)
     c = wp.vec2(cx, cy)
     rho_support = rho_kernel_size / 2.0
     support_sq = rho_support * rho_support
@@ -186,8 +218,8 @@ def update_first_order_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype
 def update_gauss_density(p: wp.array(dtype=wp.vec2), rho: wp.array2d(dtype=float)):
     i, j = wp.tid()
     rho[j, i] = 0.0
-    cx = (float(i) + 0.5) * domain_width / float(field_width) - (domain_width * 0.5)
-    cy = (float(j) + 0.5) * domain_height / float(field_height) - (domain_height * 0.5)
+    cx = (float(i) + 0.5) * domain_size / float(field_resolution) - (domain_size * 0.5)
+    cy = (float(j) + 0.5) * domain_size / float(field_resolution) - (domain_size * 0.5)
     c = wp.vec2(cx, cy)
     rho_support = rho_kernel_size / 2.0
     support_sq = rho_support * rho_support
@@ -223,7 +255,7 @@ class Scenario:
 
 def random_scenario(num_agents: int):
     # Initial positions randomly distributed through the domain.
-    measure = min(domain_width, domain_height)
+    measure = domain_size
     positions = (np.random.rand(num_agents, 2) - 0.5) * measure
     velocities = np.zeros_like(positions)
     goals = -positions
@@ -235,7 +267,7 @@ def random_scenario(num_agents: int):
 
 
 def circle_scenario(num_agents: int):
-    R = min(domain_width, domain_height) * 0.5  - force_distance
+    R = domain_size * 0.5  - force_distance
     max_agents = int(2 * np.pi * R / (2.5 * radius))
     if num_agents > max_agents:
         print(f"Warning: Reducing number of agents from {num_agents} to "
@@ -269,9 +301,9 @@ def four_blocks_scenario(num_agents: int):
     colors = np.empty((num_agents, 3), dtype=np.float32)
 
     # Block measure is 3/4 of a quadrant.
-    w = domain_width * 0.5 * 0.75
+    w = domain_size * 0.5 * 0.75
     dx = w / 4.0
-    p0 = domain_width * 0.5 * 0.125
+    p0 = domain_size * 0.5 * 0.125
     quadrants = (
         (p0, dx, p0, dx, (1, 0, 0)),  # Top right
         (-p0, -dx, p0, dx, (0, 1, 0)),  # Top left
@@ -292,7 +324,7 @@ def four_blocks_scenario(num_agents: int):
 
 
 class Simulation:
-    def __init__(self, scenario):
+    def __init__(self, scenario: Scenario, timing: bool = False, stop_speed: float = 0.06):
         self.num_agents = len(scenario.positions)
         self.positions = wp.array(scenario.positions, dtype=wp.vec2)
         self.velocities = wp.array(scenario.velocities, dtype=wp.vec2)
@@ -303,13 +335,16 @@ class Simulation:
         self.agent_radius = radius
 
         self.density_kernel = scenario.density_kernel
-        self.density = wp.zeros((field_width, field_height), dtype=float)
+        self.density = wp.zeros((field_resolution, field_resolution), dtype=float)
 
         self.sub_steps = 25
         self.dt = 0.001 * self.sub_steps  # Effectively dt = 0.001
 
+        self.show_timings = timing
+        self.stop_speed = stop_speed
+
     def step(self):
-        with wp.ScopedTimer("step"):
+        with wp.ScopedTimer("step", active=self.show_timings):
             sub_dt = self.dt / self.sub_steps
             for i in range(self.sub_steps):
                 wp.launch(compute_accel, dim=self.num_agents,
@@ -321,40 +356,41 @@ class Simulation:
                                 sub_dt]
                 )
             v = self.velocities.numpy()
-            if (np.abs(v) < 6e-2).all():
+            if (np.abs(v) < self.stop_speed).all():
                 print("All agents stopped moving!")
                 return False
         return True
 
     def update_density(self):
-        wp.launch(self.density_kernel, dim=(field_width, field_height),
+        wp.launch(self.density_kernel, dim=(field_resolution, field_resolution),
                   inputs=[self.positions, self.density])
 
     def map_to_field(self, p):
         """Given a position in "world" space, map it to the density field.
 
-        [-hw, -hhw]x[hw, hh] --> [0, 0]x[field_width, field_height]
+        [-hw, -hhw]x[hw, hh] --> [0, 0]x[field_resolution, field_resolution]
         """
-        p += np.array(((domain_width * 0.5, domain_height * 0.5),))
-        p *= np.array(((field_width / domain_width, field_height / domain_height),))
+        p += np.array(((domain_size * 0.5, domain_size * 0.5),))
+        p *= field_resolution / domain_size
         return p
 
     def step_and_render_frame(self, frame_num=None, agents=None, density_img=None):
         running = self.step()
         
         # Update agent patches
-        with wp.ScopedTimer("render"):
+        with wp.ScopedTimer("render", active=self.show_timings):
             if agents:
                 positions = self.map_to_field(self.positions.numpy())
                 for i, agent in enumerate(agents):
                     pos = positions[i]
                     agent.center = (pos[0], pos[1])
         if density_img:
-            with wp.ScopedTimer("density"):
+            with wp.ScopedTimer("density", active=self.show_timings):
                 self.update_density()
                 rho = self.density.numpy()
                 density_img.set_array(rho)
-                print(f"Total population = {(cell_area * rho.sum()):.2f}")
+                if self.show_timings:
+                    print(f"Total population = {(cell_area * rho.sum()):.2f}")
 
         if not running:
             global seq
@@ -390,10 +426,30 @@ if __name__ == '__main__':
     parser.add_argument('--density', type=str, choices=list(kernels.keys()),
                         default='first_order',
                         help=f"Choose a density-field kernel: {', '.join(kernels.keys())}")
-    parser.add_argument('--density_size', type=float, default=4.0,
-                        help="The width of the density kernel support in meters")
+    parser.add_argument('--timing', action='store_true',
+                        help="Enable timing output.")
+    parser.add_argument('--stop-speed', type=float, default=0.06,
+                        help="Speed below which agents are considered stopped.")
+    # Simulation constants.
+    constants = (
+        ('domain_size', float, domain_size, 'The size of the square simulation domain in meters'),
+        ('radius', float, radius, 'The radius of each agent in meters'),
+        ('neighbor_distance', float, neighbor_distance, 'The distance within which agents consider neighbors'),
+        ('pref_speed', float, pref_speed, 'The preferred speed of agents in meters per second'),
+        ('max_speed', float, max_speed, 'The maximum speed of agents in meters per second'),
+        ('mass', float, mass, 'The mass of each agent in kilograms'),
+        ('agent_scale', float, agent_scale, 'Scaling factor for agent forces'),
+        ('obstacle_scale', float, obstacle_scale, 'Scaling factor for obstacle forces'),
+        ('reaction_time', float, reaction_time, 'Reaction time of agents in seconds'),
+        ('force_distance', float, force_distance, 'Distance over which forces act'),
+        ('field_resolution', int, field_resolution, 'Resolution of the density field'),
+        ('rho_kernel_size', float, rho_kernel_size, 'The width of the density kernel support in meters'),
+    )
+    for name, type_, default_val, help in constants:
+        parser.add_argument(f'--{name}', type=type_, default=default_val, help=f'{help}; defaults to {default_val}.')
+
     args = parser.parse_args()
-    rho_kernel_size = wp.constant(args.density_size)
+    configure_constants(**vars(args))
 
 
     with wp.ScopedDevice(args.device):
@@ -404,7 +460,7 @@ if __name__ == '__main__':
 
         scenario = scenarios[args.scenario](args.num_agents)
         scenario.density_kernel = kernels[args.density]
-        sim = Simulation(scenario)
+        sim = Simulation(scenario, args.timing, args.stop_speed)
 
         agents = []
 
@@ -420,18 +476,16 @@ if __name__ == '__main__':
         plt.colorbar(img, label='ρ (people/m²)')
 
         # Change the axis ticks to be simulation world coordinates.
-        x_ticks = [0, field_width * 0.25, field_width * 0.5, field_width * 0.75, field_width]
-        x_labels = [-domain_width * 0.5, -domain_width * 0.25, 0.0, domain_width * 0.25, domain_width * 0.5]
-        ax.set_xticks(x_ticks, x_labels)
-        y_ticks = [0, field_height * 0.25, field_height * 0.5, field_height * 0.75, field_height]
-        y_labels = [-domain_height * 0.5, -domain_height * 0.25, 0.0, domain_height * 0.25, domain_height * 0.5]
-        ax.set_yticks(y_ticks, y_labels)
+        ticks = [0, field_resolution * 0.25, field_resolution * 0.5, field_resolution * 0.75, field_resolution]
+        labels = [-domain_size * 0.5, -domain_size * 0.25, 0.0, domain_size * 0.25, domain_size * 0.5]
+        ax.set_xticks(ticks, labels)
+        ax.set_yticks(ticks, labels)
         ax.set_aspect('equal') # Important for circles to appear round
 
         # Add circles as patches.
         # We're scaling the radius to the field dimensions. We're assuming that
         # the field and simulation domain have the same aspect ratio.
-        r = sim.agent_radius * field_width / domain_width
+        r = sim.agent_radius * field_resolution / domain_size
         for i, pi in enumerate(sim.positions.numpy()):
             circle = patches.Circle(pi, radius=r, color=scenario.colors[i, :])
             ax.add_patch(circle)
