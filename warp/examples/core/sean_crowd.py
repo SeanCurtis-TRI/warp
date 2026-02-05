@@ -155,9 +155,7 @@ def compute_accel(p: wp.array(dtype=wp.vec3), v: wp.array(dtype=wp.vec3),
 def integrate(p: wp.array(dtype=wp.vec3), v: wp.array(dtype=wp.vec3),
               a: wp.array(dtype=wp.vec3), dt: float):
     id = wp.tid()
-    delta_p2 = v[id] * dt
-    delta_p = wp.vec3(delta_p2[0], delta_p2[1], 0.0)
-    p[id] += delta_p
+    p[id] += v[id] * dt
     v[id] += a[id] * dt
     # Clamp speed; it doesn't get to accelerate indefinitely.
     new_speed = wp.norm_l2(v[id])
@@ -283,7 +281,7 @@ def circle_scenario(num_agents: int):
         num_agents = max_agents
 
     positions = np.empty((num_agents, 3), dtype=np.float32)
-    velocities = np.empty_like(positions)
+    velocities = np.zeros_like(positions)
     goals = np.empty_like(positions)
     colors = np.empty((num_agents, 3), dtype=np.float32)
 
