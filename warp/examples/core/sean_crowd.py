@@ -296,28 +296,60 @@ def random_scenario(num_agents: int):
 
 
 def circle_scenario(num_agents: int):
-    R = domain_size * 0.5 - (radius * 6.0)
-    max_agents = int(2 * np.pi * R / (4 * radius))
-    if num_agents > max_agents:
+    """Configure one or more concentric rings with the agents distributed
+    evenly around the circumference. It fills from outside, inward."""
+    # The minimum distance between agents on the same ring. It should never
+    # be smaller than 2 * radius (because that would lead to collisions).
+    spacing = radius * 5.0
+    # Given the spacing, the minimum radius is the circle with six agents.
+    min_R = spacing * 6 / (2.0 * np.pi)
+    # The maximum radius is the largest circle that can fit in the domain with
+    # some padding to avoid agents starting with non-negligible wall forces.
+    max_R = domain_size * 0.5 - (radius * 6.0)
+    # delta_R is the approximate change in radius for each ring.
+    delta_R = spacing
+
+    # We need to know how many rings to fit the requested number of agents.
+    ring_count = 0
+    remaining_agents = num_agents
+    while remaining_agents > 0:
+        R_i = max_R - ring_count * delta_R
+        if R_i < min_R:
+            break
+        ring_capacity = int(2.0 * np.pi * R_i / spacing + 0.5)
+        remaining_agents -= ring_capacity
+        ring_count += 1
+    agent_capacity = num_agents - remaining_agents
+    if agent_capacity < num_agents:
         print(f"Warning: Reducing number of agents from {num_agents} to "
-              f"{max_agents} to fit in circle scenario.")
-        num_agents = max_agents
+              f"{agent_capacity} to fit in circle scenario.")
+        num_agents = agent_capacity
 
     positions = np.empty((num_agents, 3), dtype=np.float32)
     velocities = np.zeros_like(positions)
     goals = np.empty_like(positions)
     colors = np.empty((num_agents, 3), dtype=np.float32)
 
-    dtheta = 2.0 * np.pi / num_agents
-    for i in range(num_agents):
-        theta = i * dtheta + 0.35
-        c = np.cos(theta)
-        s = np.sin(theta)
-        positions[i, 0] = R * c
-        positions[i, 1] = R * s
-        positions[i, 2] = 0.0
-        goals[i, :] = -positions[i, :]
-        colors[i, :] = np.array([c * 0.5 + 0.5, s * 0.5 + 0.5, 0.5])
+    i = 0
+    for r_i in range(ring_count):
+        R_i = max_R - r_i * delta_R
+        ring_capacity = int(2.0 * np.pi * R_i / spacing + 0.5)
+        ring_agents = min(ring_capacity, num_agents - i)
+        dtheta = 2.0 * np.pi / ring_agents
+        for j in range(ring_agents):
+            theta = j * dtheta
+            c = np.cos(theta)
+            s = np.sin(theta)
+            positions[i, 0] = R_i * c
+            positions[i, 1] = R_i * s
+            positions[i, 2] = 0.0
+            goals[i, :] = -positions[i, :]
+            colors[i, :] = np.array([c * 0.5 + 0.5, s * 0.5 + 0.5, 0.5])
+            i += 1
+    if np.max(colors) > 1.0 or np.min(colors) < 0.0:
+        too_small = (colors < 0.0).nonzero()
+        too_big = (colors > 1.0).nonzero()
+        print("Color error!", too_small, too_big)
     return Scenario(positions, velocities, goals, colors)
 
 
