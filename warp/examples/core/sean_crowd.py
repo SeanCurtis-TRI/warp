@@ -12,12 +12,11 @@ max_speed = wp.constant(2.0)  # m/s
 
 # Helbing parameters
 mass = wp.constant(80.0)
-# The scales in Menge are 10X what they are here.
-agent_scale = wp.constant(300.0)
-obstacle_scale = wp.constant(400.0)
+agent_scale = wp.constant(2000.0)
+obstacle_scale = wp.constant(4000.0)
 reaction_time = wp.constant(0.5)
-# Note: I've got 0.015 in Menge; this doesn't work well here. Not sure; don't care.
-force_distance = wp.constant(radius * 10)
+# In Menge, this is hard-coded as 0.015, which is 3/4 of default radius.
+force_distance = wp.constant(radius * 0.75)
 
 # Density field
 field_resolution = wp.constant(128)
@@ -267,8 +266,8 @@ def random_scenario(num_agents: int):
 
 
 def circle_scenario(num_agents: int):
-    R = domain_size * 0.5  - force_distance
-    max_agents = int(2 * np.pi * R / (3 * radius))
+    R = domain_size * 0.5 - (radius * 6.0)
+    max_agents = int(2 * np.pi * R / (4 * radius))
     if num_agents > max_agents:
         print(f"Warning: Reducing number of agents from {num_agents} to "
               f"{max_agents} to fit in circle scenario.")
