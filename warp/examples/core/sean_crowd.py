@@ -282,20 +282,20 @@ class Scenario:
 # Functions for creating the initial conditions of scenarios. Each returns
 # initial positions, velocities, goals, and per-agent colors.
 
-def random_scenario(num_agents: int):
+def random_scenario(num_agents: int, rng: np.random.Generator):
     # Initial positions randomly distributed through the domain.
     measure = domain_size
-    positions = (np.random.rand(num_agents, 3) - 0.5) * measure
+    positions = (rng.random((num_agents, 3)) - 0.5) * measure
     velocities = np.zeros_like(positions)
     goals = -positions
 
     # Random colors.
-    colors = np.random.rand(num_agents, 3)
+    colors = rng.random((num_agents, 3))
 
     return Scenario(positions, velocities, goals, colors)
 
 
-def circle_scenario(num_agents: int):
+def circle_scenario(num_agents: int, rng: np.random.Generator):
     """Configure one or more concentric rings with the agents distributed
     evenly around the circumference. It fills from outside, inward."""
     # The minimum distance between agents on the same ring. It should never
@@ -353,7 +353,10 @@ def circle_scenario(num_agents: int):
     return Scenario(positions, velocities, goals, colors)
 
 
-def four_blocks_scenario(num_agents: int):
+def four_blocks_scenario(num_agents: int, rng: np.random.Generator):
+    """The random number generator (rng) is currently not used, but the
+    argument is provided for compatibility with the other scenario functions.
+    """
     print(f"Warning: Four blocks ignores the number of agents argument.")
 
     num_agents = 100 # 4 blocks of 25 agents each.
@@ -530,6 +533,8 @@ if __name__ == '__main__':
                         help="Enable timing output.")
     parser.add_argument('--use_grid', action='store_true',
                         help="Use a spatial hash grid for neighbor queries.")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Random seed for reproducibility.")
     # Simulation constants.
     constants = (
         ('domain_size', float, domain_size, 'The size of the square simulation domain in meters'),
@@ -551,6 +556,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     configure_constants(**vars(args))
 
+    rng = np.random.default_rng(args.seed)
+    scenario = scenarios[args.scenario](args.num_agents, rng)
 
     with wp.ScopedDevice(args.device):
         import matplotlib
@@ -558,7 +565,6 @@ if __name__ == '__main__':
         import matplotlib.animation as anim
         import matplotlib.pyplot as plt
 
-        scenario = scenarios[args.scenario](args.num_agents)
         scenario.density_kernel = kernels[args.density]
         sim = Simulation(scenario, args.use_grid, args.timing)
 
