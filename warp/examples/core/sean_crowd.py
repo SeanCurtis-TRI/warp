@@ -1,3 +1,5 @@
+import sys
+
 import numpy as np
 import warp as wp
 import warp.render
@@ -390,7 +392,8 @@ def four_blocks_scenario(num_agents: int, rng: np.random.Generator):
 
 
 class Simulation:
-    def __init__(self, scenario: Scenario, use_grid: bool, timing: bool = False):
+    def __init__(self, scenario: Scenario, use_grid: bool, timing: bool = False,
+                 exit_on_stop: bool = False):
         self.num_agents = len(scenario.positions)
         self.positions = wp.array(scenario.positions, dtype=wp.vec3)
         self.velocities = wp.array(scenario.velocities, dtype=wp.vec3)
@@ -420,6 +423,7 @@ class Simulation:
         self.step_count = 0
 
         self.show_timings = timing
+        self.exit_on_stop = exit_on_stop
 
     def validate_state(self, i: int):
         v = self.velocities.numpy()
@@ -459,6 +463,8 @@ class Simulation:
             if (dist_sq < radius * 0.25).all():
                 print(f"All agents have reached their goals at step "
                       f"{self.step_count}!")
+                if self.exit_on_stop:
+                    sys.exit()
                 return False
         return True
 
@@ -534,6 +540,9 @@ if __name__ == '__main__':
                         help="Use a spatial hash grid for neighbor queries.")
     parser.add_argument("--seed", type=int, default=None,
                         help="Random seed for reproducibility.")
+    parser.add_argument('--exit_on_stop', action='store_true',
+                        help="Exit the program when all agents have reached their goals.")
+
     # Simulation constants.
     constants = (
         ('domain_size', float, domain_size, 'The size of the square simulation domain in meters'),
@@ -565,7 +574,7 @@ if __name__ == '__main__':
         import matplotlib.pyplot as plt
 
         scenario.density_kernel = kernels[args.density]
-        sim = Simulation(scenario, args.use_grid, args.timing)
+        sim = Simulation(scenario, args.use_grid, args.timing, args.exit_on_stop)
 
         agents = []
 
