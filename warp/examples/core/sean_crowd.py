@@ -390,7 +390,7 @@ def four_blocks_scenario(num_agents: int, rng: np.random.Generator):
 
 
 class Simulation:
-    def __init__(self, scenario: Scenario, use_grid: bool, timing: bool = False, stop_speed: float = 0.06):
+    def __init__(self, scenario: Scenario, use_grid: bool, timing: bool = False):
         self.num_agents = len(scenario.positions)
         self.positions = wp.array(scenario.positions, dtype=wp.vec3)
         self.velocities = wp.array(scenario.velocities, dtype=wp.vec3)
@@ -420,7 +420,6 @@ class Simulation:
         self.step_count = 0
 
         self.show_timings = timing
-        self.stop_speed = stop_speed
 
     def validate_state(self, i: int):
         v = self.velocities.numpy()
