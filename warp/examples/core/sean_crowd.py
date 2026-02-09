@@ -285,8 +285,10 @@ class Scenario:
 # initial positions, velocities, goals, and per-agent colors.
 
 def random_scenario(num_agents: int, rng: np.random.Generator):
+    # TODO: This doesn't start in a collision-free configuration. That's
+    # problematic.
     # Initial positions randomly distributed through the domain.
-    measure = domain_size
+    measure = domain_size - (radius * 2.0)
     positions = (rng.random((num_agents, 3)) - 0.5) * measure
     velocities = np.zeros_like(positions)
     goals = -positions
@@ -302,7 +304,7 @@ def circle_scenario(num_agents: int, rng: np.random.Generator):
     evenly around the circumference. It fills from outside, inward."""
     # The minimum distance between agents on the same ring. It should never
     # be smaller than 2 * radius (because that would lead to collisions).
-    spacing = radius * 5.0
+    spacing = radius * 6.0
     # Given the spacing, the minimum radius is the circle with six agents.
     min_R = spacing * 6 / (2.0 * np.pi)
     # The maximum radius is the largest circle that can fit in the domain with
@@ -326,8 +328,11 @@ def circle_scenario(num_agents: int, rng: np.random.Generator):
         print(f"Warning: Reducing number of agents from {num_agents} to "
               f"{agent_capacity} to fit in circle scenario.")
         num_agents = agent_capacity
+    print(f"Populating with {num_agents} agents in {ring_count} rings.")
 
-    positions = np.empty((num_agents, 3), dtype=np.float32)
+    # Add a little noise to break symmetry.
+    positions = (rng.random((num_agents, 3)) - 0.5) * 0.75 * radius
+    positions[:, 2] = 0.0
     velocities = np.zeros_like(positions)
     goals = np.empty_like(positions)
     colors = np.empty((num_agents, 3), dtype=np.float32)
@@ -342,9 +347,8 @@ def circle_scenario(num_agents: int, rng: np.random.Generator):
             theta = j * dtheta
             c = np.cos(theta)
             s = np.sin(theta)
-            positions[i, 0] = R_i * c
-            positions[i, 1] = R_i * s
-            positions[i, 2] = 0.0
+            positions[i, 0] += R_i * c
+            positions[i, 1] += R_i * s
             goals[i, :] = -positions[i, :]
             colors[i, :] = np.array([c * 0.5 + 0.5, s * 0.5 + 0.5, 0.5])
             i += 1
@@ -362,7 +366,9 @@ def four_blocks_scenario(num_agents: int, rng: np.random.Generator):
     print(f"Warning: Four blocks ignores the number of agents argument.")
 
     num_agents = 100 # 4 blocks of 25 agents each.
-    positions = np.empty((num_agents, 3), dtype=np.float32)
+    # Add a little noise to break symmetry.
+    positions = (rng.random((num_agents, 3)) - 0.5) * 2 * radius
+    positions[:, 2] = 0.0
     velocities = np.empty_like(positions)
     goals = np.empty_like(positions)
     colors = np.empty((num_agents, 3), dtype=np.float32)
@@ -381,9 +387,8 @@ def four_blocks_scenario(num_agents: int, rng: np.random.Generator):
     for x0, dx, y0, dy, c in quadrants:
          for ix in range(5):
             for iy in range(5):
-                positions[i, 0] = x0 + ix * dx
-                positions[i, 1] = y0 + iy * dy
-                positions[i, 2] = 0.0
+                positions[i, 0] += x0 + ix * dx
+                positions[i, 1] += y0 + iy * dy
                 goals[i, :] = -positions[i, :]
                 velocities[i, :] = 0.0
                 colors[i, :] = c
@@ -578,7 +583,7 @@ if __name__ == '__main__':
 
         agents = []
 
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(figsize=(12, 12))
 
         img = plt.imshow(
             sim.density.numpy(),
