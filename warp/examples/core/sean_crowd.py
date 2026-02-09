@@ -486,7 +486,7 @@ class Simulation:
         p *= field_resolution / domain_size
         return p
 
-    def step_and_render_frame(self, frame_num=None, agents=None, density_img=None):
+    def step_and_render_agents(self, frame_num=None, agents=None):
         running = self.step()
         
         # Update agent patches
@@ -496,7 +496,17 @@ class Simulation:
                 for i, agent in enumerate(agents):
                     pos = positions[i]
                     agent.center = (pos[0], pos[1])
+
+        if not running:
+            global seq
+            if seq is not None:
+                seq.event_source.stop()
+        return agents
+
+    def step_and_render_all(self, frame_num=None, agents=None, density_img=None):
+        self.step_and_render_agents(frame_num, agents)
         if density_img:
+            # results += [density_img]
             with wp.ScopedTimer("density", active=self.show_timings):
                 self.update_density()
                 rho = self.density.numpy()
@@ -504,10 +514,6 @@ class Simulation:
                 if self.show_timings:
                     print(f"Total population = {(cell_area * rho.sum()):.2f}")
 
-        if not running:
-            global seq
-            if seq is not None:
-                seq.event_source.stop()
         return agents + [density_img]
 
 
@@ -545,6 +551,8 @@ if __name__ == '__main__':
                         help="Use a spatial hash grid for neighbor queries.")
     parser.add_argument("--seed", type=int, default=None,
                         help="Random seed for reproducibility.")
+    parser.add_argument('--no_density', action='store_true',
+                        help="Disable density field computation and rendering.")
     parser.add_argument('--exit_on_stop', action='store_true',
                         help="Exit the program when all agents have reached their goals.")
 
@@ -579,20 +587,23 @@ if __name__ == '__main__':
         import matplotlib.pyplot as plt
 
         scenario.density_kernel = kernels[args.density]
-        sim = Simulation(scenario, args.use_grid, args.timing, args.exit_on_stop)
+        sim = Simulation(scenario, args.use_grid, args.timing,
+                         args.exit_on_stop)
 
         agents = []
 
         fig, ax = plt.subplots(figsize=(12, 12))
 
-        img = plt.imshow(
-            sim.density.numpy(),
-            origin="lower",
-            animated=True,
-            interpolation="antialiased",
-        )
-        img.set_norm(matplotlib.colors.Normalize(0.0, 6.0))
-        plt.colorbar(img, label='ρ (people/m²)')
+        img = None
+        if not args.no_density:
+            img = plt.imshow(
+                sim.density.numpy(),
+                origin="lower",
+                animated=True,
+                interpolation="antialiased",
+            )
+            img.set_norm(matplotlib.colors.Normalize(0.0, 6.0))
+            plt.colorbar(img, label='ρ (people/m²)')
 
         # Change the axis ticks to be simulation world coordinates.
         ticks = [0, field_resolution * 0.25, field_resolution * 0.5, field_resolution * 0.75, field_resolution]
@@ -612,8 +623,8 @@ if __name__ == '__main__':
 
         seq = anim.FuncAnimation(
             fig,
-            sim.step_and_render_frame,
-            fargs=(agents, img),
+            sim.step_and_render_agents if args.no_density else sim.step_and_render_all,
+            fargs=(agents, ) if args.no_density else (agents, img),
             frames=args.num_frames,
             blit=True,
             interval=1,
