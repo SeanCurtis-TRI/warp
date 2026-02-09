@@ -452,9 +452,11 @@ class Simulation:
                                 sub_dt]
                 )
                 self.validate_state(i)
-            v = self.velocities.numpy()
-            if (np.abs(v) < self.stop_speed).all():
-                print("All agents stopped moving!")
+            disp = self.positions.numpy() - self.goals.numpy()
+            dist_sq = np.sum(disp[:, :2] * disp[:, :2], axis=1)
+            if (dist_sq < radius * 0.25).all():
+                print(f"All agents have reached their goals at step "
+                      f"{self.step_count}!")
                 return False
         return True
 
@@ -526,8 +528,6 @@ if __name__ == '__main__':
                         help=f"Choose a density-field kernel: {', '.join(kernels.keys())}")
     parser.add_argument('--timing', action='store_true',
                         help="Enable timing output.")
-    parser.add_argument('--stop-speed', type=float, default=0.06,
-                        help="Speed below which agents are considered stopped.")
     parser.add_argument('--use_grid', action='store_true',
                         help="Use a spatial hash grid for neighbor queries.")
     # Simulation constants.
@@ -560,7 +560,7 @@ if __name__ == '__main__':
 
         scenario = scenarios[args.scenario](args.num_agents)
         scenario.density_kernel = kernels[args.density]
-        sim = Simulation(scenario, args.use_grid, args.timing, args.stop_speed)
+        sim = Simulation(scenario, args.use_grid, args.timing)
 
         agents = []
 
