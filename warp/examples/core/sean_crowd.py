@@ -398,7 +398,8 @@ def four_blocks_scenario(num_agents: int, rng: np.random.Generator):
 
 class Simulation:
     def __init__(self, scenario: Scenario, use_grid: bool, timing: bool = False,
-                 exit_on_stop: bool = False):
+                 exit_on_stop: bool = False, do_density: bool = True,
+                 run_all_frames: bool = False):
         self.num_agents = len(scenario.positions)
         self.positions = wp.array(scenario.positions, dtype=wp.vec3)
         self.velocities = wp.array(scenario.velocities, dtype=wp.vec3)
@@ -414,8 +415,12 @@ class Simulation:
 
         self.agent_radius = radius
 
-        self.density_kernel = scenario.density_kernel
-        self.density = wp.zeros((field_resolution, field_resolution), dtype=float)
+        if do_density:
+            self.density_kernel = scenario.density_kernel
+            self.density = wp.zeros((field_resolution, field_resolution), dtype=float)
+        else:
+            self.density_kernel = None
+            self.density = None
 
         # TODO: Consider setting dt and inferring the number of substeps so
         # that the solve gets a value on the order of 0.001. That might be more
@@ -428,6 +433,7 @@ class Simulation:
         self.step_count = 0
 
         self.show_timings = timing
+        self.run_all_frames = run_all_frames
         self.exit_on_stop = exit_on_stop
 
     def validate_state(self, i: int):
@@ -443,7 +449,7 @@ class Simulation:
     def step(self):
         self.step_count += 1
         self.validate_state(-1)
-        with wp.ScopedTimer("step", active=self.show_timings):
+        with wp.ScopedTimer("compute agents", active=self.show_timings):
             sub_dt = self.dt / self.sub_steps
             for i in range(self.sub_steps):
                 if self.use_grid:
@@ -463,6 +469,8 @@ class Simulation:
                                 sub_dt]
                 )
                 self.validate_state(i)
+        self.update_density()
+        if not self.run_all_frames:
             disp = self.positions.numpy() - self.goals.numpy()
             dist_sq = np.sum(disp[:, :2] * disp[:, :2], axis=1)
             if (dist_sq < radius * 0.25).all():
@@ -474,8 +482,10 @@ class Simulation:
         return True
 
     def update_density(self):
-        wp.launch(self.density_kernel, dim=(field_resolution, field_resolution),
-                  inputs=[self.positions, self.density])
+        if self.density_kernel is not None:
+            with wp.ScopedTimer("compute density", active=self.show_timings):
+                wp.launch(self.density_kernel, dim=(field_resolution,
+                          field_resolution), inputs=[self.positions, self.density])
 
     def map_to_field(self, p):
         """Given a position in "world" space, map it to the density field.
@@ -490,7 +500,7 @@ class Simulation:
         running = self.step()
         
         # Update agent patches
-        with wp.ScopedTimer("render", active=self.show_timings):
+        with wp.ScopedTimer("render agents", active=self.show_timings):
             if agents:
                 positions = self.map_to_field(self.positions.numpy())
                 for i, agent in enumerate(agents):
@@ -505,16 +515,69 @@ class Simulation:
 
     def step_and_render_all(self, frame_num=None, agents=None, density_img=None):
         self.step_and_render_agents(frame_num, agents)
-        if density_img:
-            # results += [density_img]
-            with wp.ScopedTimer("density", active=self.show_timings):
-                self.update_density()
-                rho = self.density.numpy()
-                density_img.set_array(rho)
-                if self.show_timings:
-                    print(f"Total population = {(cell_area * rho.sum()):.2f}")
+        with wp.ScopedTimer("render density", active=self.show_timings):
+            rho = self.density.numpy()
+            density_img.set_array(rho)
+            if self.show_timings:
+                print(f"Total population = {(cell_area * rho.sum()):.2f}")
 
         return agents + [density_img]
+
+def run(sim: Simulation, args):
+    import matplotlib
+    import matplotlib.patches as patches
+    import matplotlib.animation as anim
+    import matplotlib.pyplot as plt
+
+    agents = []
+
+    fig, ax = plt.subplots(figsize=(12, 12))
+
+    img = None
+    if not args.no_density:
+        img = plt.imshow(
+            sim.density.numpy(),
+            origin="lower",
+            animated=True,
+            interpolation="antialiased",
+        )
+        img.set_norm(matplotlib.colors.Normalize(0.0, 6.0))
+        plt.colorbar(img, label='ρ (people/m²)')
+
+    # Change the axis ticks to be simulation world coordinates.
+    ticks = [0, field_resolution * 0.25, field_resolution * 0.5, field_resolution * 0.75, field_resolution]
+    labels = [-domain_size * 0.5, -domain_size * 0.25, 0.0, domain_size * 0.25, domain_size * 0.5]
+    ax.set_xticks(ticks, labels)
+    ax.set_yticks(ticks, labels)
+    ax.set_aspect('equal') # Important for circles to appear round
+
+    # Add circles as patches.
+    # We're scaling the radius to the field dimensions. We're assuming that
+    # the field and simulation domain have the same aspect ratio.
+    r = sim.agent_radius * field_resolution / domain_size
+    for i, pi in enumerate(sim.positions.numpy()):
+        circle = patches.Circle(pi, radius=r, color=scenario.colors[i, :])
+        ax.add_patch(circle)
+        agents.append(circle)
+
+    global seq
+    seq = anim.FuncAnimation(
+        fig,
+        sim.step_and_render_agents if args.no_density else sim.step_and_render_all,
+        fargs=(agents, ) if args.no_density else (agents, img),
+        frames=args.num_frames,
+        blit=not args.no_density,
+        interval=1,
+    )
+
+    plt.show()
+
+def run_headless(sim: Simulation, args):
+    for i in range(args.num_frames):
+        sim.step()
+        if i % 50 == 0:
+            print('.', end='', flush=True)
+    print(f"\nFinished after {i + 1} steps")
 
 
 if __name__ == '__main__':
@@ -553,8 +616,12 @@ if __name__ == '__main__':
                         help="Random seed for reproducibility.")
     parser.add_argument('--no_density', action='store_true',
                         help="Disable density field computation and rendering.")
+    parser.add_argument('--run_all_frames', action='store_true',
+                        help="Run through all frames will not detect stopping conditions.")
     parser.add_argument('--exit_on_stop', action='store_true',
                         help="Exit the program when all agents have reached their goals.")
+    parser.add_argument('--headless', action='store_true',
+                        help="Run without rendering. Implies --exit_on_stop.")
 
     # Simulation constants.
     constants = (
@@ -579,57 +646,20 @@ if __name__ == '__main__':
 
     rng = np.random.default_rng(args.seed)
     scenario = scenarios[args.scenario](args.num_agents, rng)
+    scenario.density_kernel = kernels[args.density]
 
     with wp.ScopedDevice(args.device):
-        import matplotlib
-        import matplotlib.patches as patches
-        import matplotlib.animation as anim
-        import matplotlib.pyplot as plt
-
-        scenario.density_kernel = kernels[args.density]
-        sim = Simulation(scenario, args.use_grid, args.timing,
-                         args.exit_on_stop)
-
-        agents = []
-
-        fig, ax = plt.subplots(figsize=(12, 12))
-
-        img = None
-        if not args.no_density:
-            img = plt.imshow(
-                sim.density.numpy(),
-                origin="lower",
-                animated=True,
-                interpolation="antialiased",
-            )
-            img.set_norm(matplotlib.colors.Normalize(0.0, 6.0))
-            plt.colorbar(img, label='ρ (people/m²)')
-
-        # Change the axis ticks to be simulation world coordinates.
-        ticks = [0, field_resolution * 0.25, field_resolution * 0.5, field_resolution * 0.75, field_resolution]
-        labels = [-domain_size * 0.5, -domain_size * 0.25, 0.0, domain_size * 0.25, domain_size * 0.5]
-        ax.set_xticks(ticks, labels)
-        ax.set_yticks(ticks, labels)
-        ax.set_aspect('equal') # Important for circles to appear round
-
-        # Add circles as patches.
-        # We're scaling the radius to the field dimensions. We're assuming that
-        # the field and simulation domain have the same aspect ratio.
-        r = sim.agent_radius * field_resolution / domain_size
-        for i, pi in enumerate(sim.positions.numpy()):
-            circle = patches.Circle(pi, radius=r, color=scenario.colors[i, :])
-            ax.add_patch(circle)
-            agents.append(circle)
-
-        seq = anim.FuncAnimation(
-            fig,
-            sim.step_and_render_agents if args.no_density else sim.step_and_render_all,
-            fargs=(agents, ) if args.no_density else (agents, img),
-            frames=args.num_frames,
-            blit=True,
-            interval=1,
+        sim = Simulation(
+            scenario=scenario,
+            use_grid=args.use_grid,
+            timing=args.timing,
+            exit_on_stop=args.exit_on_stop or args.headless,
+            do_density=not args.no_density,
+            run_all_frames=args.run_all_frames,
         )
-
-        plt.show()
+        if args.headless:
+            run_headless(sim, args)
+        else:
+            run(sim, args)
 
         
