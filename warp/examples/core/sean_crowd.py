@@ -188,8 +188,10 @@ def integrate(p: wp.array(dtype=wp.vec3), v: wp.array(dtype=wp.vec3),
         v[id] = v[id] * (max_speed / new_speed)
 
 
+# All density kernels take a possible grid id; even if it gets ignored.
+
 @wp.kernel
-def update_box_density(p: wp.array(dtype=wp.vec3), rho: wp.array2d(dtype=float)):
+def update_box_density(p: wp.array(dtype=wp.vec3), rho: wp.array2d(dtype=float), grid_id: wp.uint64):
     i, j = wp.tid()
     rho[j, i] = 0.0
     rho_support = rho_kernel_size
@@ -208,7 +210,7 @@ def update_box_density(p: wp.array(dtype=wp.vec3), rho: wp.array2d(dtype=float))
 
 
 @wp.kernel
-def update_circle_density(p: wp.array(dtype=wp.vec3), rho: wp.array2d(dtype=float)):
+def update_circle_density(p: wp.array(dtype=wp.vec3), rho: wp.array2d(dtype=float), grid_id: wp.uint64):
     i, j = wp.tid()
     rho[j, i] = 0.0
     field_size = float(field_resolution)
@@ -226,7 +228,7 @@ def update_circle_density(p: wp.array(dtype=wp.vec3), rho: wp.array2d(dtype=floa
 
 
 @wp.kernel
-def update_first_order_density(p: wp.array(dtype=wp.vec3), rho: wp.array2d(dtype=float)):
+def update_first_order_density(p: wp.array(dtype=wp.vec3), rho: wp.array2d(dtype=float), grid_id: wp.uint64):
     i, j = wp.tid()
     rho[j, i] = 0.0
     field_size = float(field_resolution)
@@ -244,14 +246,34 @@ def update_first_order_density(p: wp.array(dtype=wp.vec3), rho: wp.array2d(dtype
             dist = rho_support -wp.sqrt(dist_sq)
             rho[j, i] += dist * norm
 
+# Gauss implementation
 
-@wp.kernel
-def update_gauss_density(p: wp.array(dtype=wp.vec3), rho: wp.array2d(dtype=float)):
-    i, j = wp.tid()
-    rho[j, i] = 0.0
-    cx = (float(i) + 0.5) * domain_size / float(field_resolution) - (domain_size * 0.5)
-    cy = (float(j) + 0.5) * domain_size / float(field_resolution) - (domain_size * 0.5)
+@wp.func
+def cell_center(i: int, j:int):
+    # Computes the center of the cell assigned to the current thread.
+    field_size = float(field_resolution)
+    cx = (float(i) + 0.5) * domain_size / field_size - (domain_size * 0.5)
+    cy = (float(j) + 0.5) * domain_size / field_size - (domain_size * 0.5)
     c = wp.vec3(cx, cy, 0.0)
+    return c
+
+
+@wp.func
+def add_gauss_contribution(p: wp.vec3, c: wp.vec3, params: wp.vec4,
+                           rho: wp.array2d(dtype=float), i: int, j: int):
+    support_sq = params[1]
+    two_sigma_sq = params[2]
+    norm = params[3]
+    dist_sq = wp.length_sq(p - c)
+    if dist_sq <= support_sq:
+        val = wp.exp(-dist_sq / two_sigma_sq)
+        rho[j, i] += val * norm
+
+
+@wp.func
+def gauss_parameters():
+    """Returns a tuple of gauss parameters:
+       [support squared, two_sigma_sq, norm]."""
     rho_support = rho_kernel_size / 2.0
     support_sq = rho_support * rho_support
     sigma = rho_support / 3.0
@@ -264,12 +286,33 @@ def update_gauss_density(p: wp.array(dtype=wp.vec3), rho: wp.array2d(dtype=float
     # agent is not going to hurt.
     two_sigma_sq = 2.0 * sigma * sigma
     norm = 1.0 / (0.9889 * two_sigma_sq * np.pi)
+    return wp.vec4(rho_support, support_sq, two_sigma_sq, norm)
+
+
+@wp.kernel
+def update_gauss_density_grid(p: wp.array(dtype=wp.vec3),
+                              rho: wp.array2d(dtype=float), grid_id: wp.uint64):
+    # Same as update_gauss_density, except we use the hash grid to select
+    # nearby agents instead of iterating over all agents.
+    i, j = wp.tid()
+    rho[j, i] = 0.0
+    c = cell_center(i, j)
+    params = gauss_parameters()
+    rho_support = params[0]
+    neighbors = wp.hash_grid_query(grid_id, c, rho_support)
+    for a in neighbors:
+        add_gauss_contribution(p[a], c, params, rho, i, j)
+
+
+@wp.kernel
+def update_gauss_density(p: wp.array(dtype=wp.vec3),
+                         rho: wp.array2d(dtype=float), grid_id: wp.uint64):
+    params = gauss_parameters()
+    i, j = wp.tid()
+    rho[j, i] = 0.0
+    c = cell_center(i, j)
     for a in range(len(p)):
-        pos = p[a]
-        dist_sq = wp.length_sq(pos - c)
-        if dist_sq <= support_sq:
-            val = wp.exp(-dist_sq / two_sigma_sq)
-            rho[j, i] += val * norm
+        add_gauss_contribution(p[a], c, params, rho, i, j)
 
 
 class Scenario:
@@ -395,6 +438,10 @@ def four_blocks_scenario(num_agents: int, rng: np.random.Generator):
                 i += 1
     return Scenario(positions, velocities, goals, colors)
 
+class DummyGrid:
+    def __init__(self):
+        self.id = wp.uint64(0)
+
 
 class Simulation:
     def __init__(self, scenario: Scenario, use_grid: bool, timing: bool = False,
@@ -409,9 +456,12 @@ class Simulation:
 
         self.use_grid = use_grid
         if self.use_grid:
-            grid_rez = 32
+            grid_rez = 48
             self.grid = wp.HashGrid(grid_rez, grid_rez, 1)
             self.grid_cell_size = domain_size / grid_rez
+        else:
+            # Dummy grid, so we don't have to branch in the kernel.
+            self.grid = DummyGrid()
 
         self.agent_radius = radius
 
@@ -449,8 +499,8 @@ class Simulation:
     def step(self):
         self.step_count += 1
         self.validate_state(-1)
+        sub_dt = self.dt / self.sub_steps
         with wp.ScopedTimer("compute agents", active=self.show_timings):
-            sub_dt = self.dt / self.sub_steps
             for i in range(self.sub_steps):
                 if self.use_grid:
                     self.grid.build(self.positions, self.grid_cell_size)
@@ -484,8 +534,9 @@ class Simulation:
     def update_density(self):
         if self.density_kernel is not None:
             with wp.ScopedTimer("compute density", active=self.show_timings):
-                wp.launch(self.density_kernel, dim=(field_resolution,
-                          field_resolution), inputs=[self.positions, self.density])
+                wp.launch(self.density_kernel,
+                            dim=(field_resolution, field_resolution),
+                            inputs=[self.positions, self.density, self.grid.id])
 
     def map_to_field(self, p):
         """Given a position in "world" space, map it to the density field.
@@ -580,20 +631,32 @@ def run_headless(sim: Simulation, args):
     print(f"\nFinished after {i + 1} steps")
 
 
+class KernelSelector:
+    kernels = {
+        'box': (update_box_density, update_box_density),
+        'circle': (update_circle_density, update_circle_density),
+        'first_order': (update_first_order_density, update_first_order_density),
+        'gauss': (update_gauss_density, update_gauss_density_grid),
+    }
+
+    @staticmethod
+    def valid_kernels():
+        return list(KernelSelector.kernels.keys())
+
+    @staticmethod
+    def get_kernel(name: str, use_grid: bool):
+        index = 1 if use_grid else 0
+        return KernelSelector.kernels[name][index]
+
+
 if __name__ == '__main__':
     import argparse
 
-    kernels = {
-        'box': update_box_density,
-        'circle': update_circle_density,
-        'first_order': update_first_order_density,
-        'gauss': update_gauss_density,
+    scenarios = {
+        'random': random_scenario,
+        'circle': circle_scenario,
+        'four_blocks': four_blocks_scenario,
     }
-
-    scenarios = {'random': random_scenario,
-                 'circle': circle_scenario,
-                 'four_blocks': four_blocks_scenario,
-                 }
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--device', type=str, default=None,
@@ -605,9 +668,10 @@ if __name__ == '__main__':
     parser.add_argument('--scenario', type=str, choices=list(scenarios.keys()),
                         default='circle',
                         help=f"Choose a scenario: {', '.join(scenarios.keys())}")
-    parser.add_argument('--density', type=str, choices=list(kernels.keys()),
+    kernel_names = KernelSelector.valid_kernels()
+    parser.add_argument('--density', type=str, choices=kernel_names,
                         default='gauss',
-                        help=f"Choose a density-field kernel: {', '.join(kernels.keys())}")
+                        help=f"Choose a density-field kernel: {', '.join(kernel_names)}")
     parser.add_argument('--timing', action='store_true',
                         help="Enable timing output.")
     parser.add_argument('--use_grid', action='store_true',
@@ -646,7 +710,7 @@ if __name__ == '__main__':
 
     rng = np.random.default_rng(args.seed)
     scenario = scenarios[args.scenario](args.num_agents, rng)
-    scenario.density_kernel = kernels[args.density]
+    scenario.density_kernel = KernelSelector.get_kernel(args.density, args.use_grid)
 
     with wp.ScopedDevice(args.device):
         sim = Simulation(
