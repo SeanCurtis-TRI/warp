@@ -446,7 +446,7 @@ class DummyGrid:
 class Simulation:
     def __init__(self, scenario: Scenario, use_grid: bool, timing: bool = False,
                  exit_on_stop: bool = False, do_density: bool = True,
-                 run_all_frames: bool = False):
+                 run_all_frames: bool = False, vis_freq: float = 30.0):
         self.num_agents = len(scenario.positions)
         self.positions = wp.array(scenario.positions, dtype=wp.vec3)
         self.velocities = wp.array(scenario.velocities, dtype=wp.vec3)
@@ -485,6 +485,9 @@ class Simulation:
         self.show_timings = timing
         self.run_all_frames = run_all_frames
         self.exit_on_stop = exit_on_stop
+
+        self.next_vis = 0.0
+        self.vis_dt = 1.0 / vis_freq
 
     def validate_state(self, i: int):
         v = self.velocities.numpy()
@@ -550,13 +553,16 @@ class Simulation:
     def step_and_render_agents(self, frame_num=None, agents=None):
         running = self.step()
         
-        # Update agent patches
-        with wp.ScopedTimer("render agents", active=self.show_timings):
-            if agents:
-                positions = self.map_to_field(self.positions.numpy())
-                for i, agent in enumerate(agents):
-                    pos = positions[i]
-                    agent.center = (pos[0], pos[1])
+        t = self.step_count * self.dt
+        if t >= self.next_vis:
+            self.next_vis += self.vis_dt
+            # Update agent patches
+            with wp.ScopedTimer("render agents", active=self.show_timings):
+                if agents:
+                    positions = self.map_to_field(self.positions.numpy())
+                    for i, agent in enumerate(agents):
+                        pos = positions[i]
+                        agent.center = (pos[0], pos[1])
 
         if not running:
             global seq
@@ -565,12 +571,15 @@ class Simulation:
         return agents
 
     def step_and_render_all(self, frame_num=None, agents=None, density_img=None):
+        t = self.step_count * self.dt
         self.step_and_render_agents(frame_num, agents)
-        with wp.ScopedTimer("render density", active=self.show_timings):
-            rho = self.density.numpy()
-            density_img.set_array(rho)
-            if self.show_timings:
-                print(f"Total population = {(cell_area * rho.sum()):.2f}")
+        if t >= self.next_vis:
+            # Do *not* increment self.next_vis; it's handled in step-and_render_agents.
+            with wp.ScopedTimer("render density", active=self.show_timings):
+                rho = self.density.numpy()
+                density_img.set_array(rho)
+                if self.show_timings:
+                    print(f"Total population = {(cell_area * rho.sum()):.2f}")
 
         return agents + [density_img]
 
@@ -686,6 +695,8 @@ if __name__ == '__main__':
                         help="Exit the program when all agents have reached their goals.")
     parser.add_argument('--headless', action='store_true',
                         help="Run without rendering. Implies --exit_on_stop.")
+    parser.add_argument('--vis_freq', type=float, default=30,
+                        help='Frequency at which visualization is updated (in simulation seconds)')
 
     # Simulation constants.
     constants = (
@@ -720,6 +731,7 @@ if __name__ == '__main__':
             exit_on_stop=args.exit_on_stop or args.headless,
             do_density=not args.no_density,
             run_all_frames=args.run_all_frames,
+            vis_freq=args.vis_freq,
         )
         if args.headless:
             run_headless(sim, args)
