@@ -74,11 +74,48 @@ def extract_output(stdout_str):
         data["population"]  = "No population information found"
     if "time" not in data:
         data["time"] = "No timing information found"
-    return (f"Actual population, {data['population']}, "
-            f"Actual frames, {data['frames']}, "
-            f"Time, {data['time']}")
+    return data
 
-def run_script_repeatedly(script_path, parameters_list):
+
+def extract_output_str(stdout_str):
+    """
+    Extracts interesting information from the output string.
+
+    Args:
+        stdout_str (str): The captured standard output from the script.
+
+    Returns:
+        str: A formatted string containing the relevant information, or an
+             error message if not found.
+    """
+    data = extract_output(stdout_str)
+    return (
+        f"Time, {data['time']}, "
+        f"Actual population, {data['population']}, "
+        f"Actual frames, {data['frames']}"
+    )
+
+
+def extract_columns(param_dict, output_dict, columns):
+    """
+    Extracts a list of values from param_dict and output_str based on the
+    specified column names.
+
+    :param param_dict: The parameters for an experiment.
+    :param output_dict: The parsed simulation output values.
+    :param columns: Names of columns to extract.
+    """
+    values = []
+    for name in columns:
+        if name in param_dict:
+            values.append(param_dict[name])
+        elif name in output_dict:
+            values.append(output_dict[name])
+        else:
+            values.append(f"No value")
+    return values
+
+def run_script_repeatedly(script_path, parameters_list, columns: list=None):
     """
     Runs another script with different parameters and captures stdout.
 
@@ -90,6 +127,7 @@ def run_script_repeatedly(script_path, parameters_list):
                                                valid value, which means no
                                                value.
     """
+    data = []
     for params in parameters_list:
         set_required_parameters(params)
         # Build the full command
@@ -104,7 +142,7 @@ def run_script_repeatedly(script_path, parameters_list):
                 stderr=subprocess.PIPE,     # Capture stderr (optional, good practice)
                 text=True                   # Decode output as text (str), not bytes
             )
-            print(f"{iteration_header(params)}, {extract_output(result.stdout)}")
+            data.append(extract_columns(params, extract_output(result.stdout), columns))
                 
         except subprocess.CalledProcessError as e:
             print(f"Script failed with exit code {e.returncode}")
@@ -118,23 +156,29 @@ def run_script_repeatedly(script_path, parameters_list):
         except Exception as e:
             print(f"An unexpected error occurred: {e}")
             break
+    print(", ".join(columns))
+    for row in data:
+        print(", ".join([str(value) for value in row]))
 
-# --- Example Usage ---
+
 if __name__ == "__main__":
     from pathlib import Path
     script_dir = Path(__file__).resolve().parent
     script_path = script_dir / "sean_crowd.py"
     all_parameters = []
 
-    for use_density in [True, False]:
-        params = {}
-        if not use_density:
-            params["no_density"] = None
+    columns = ("calc_density", "num_agents", "grid_size", "time", "population")
+
+    for density in ['TRUE', 'FALSE']:
+        params = {"calc_density": density}
         for agent_count in [250, 500, 1000, 2000, 4000, 8000]:
             params["num_agents"] = agent_count
             for grid_size in [0, 16, 24, 32, 48, 64]:
                 params["grid_size"] = grid_size
                 all_parameters.append(params.copy())
     
-    # 3. Run the function
-    run_script_repeatedly(script_path, all_parameters)
+    all_parameters = [
+        {"calc_density": "TRUE", "num_agents": 20},
+        {"calc_density": "FALSE", "num_agents": 100},
+    ]
+    run_script_repeatedly(script_path, all_parameters, columns=columns)

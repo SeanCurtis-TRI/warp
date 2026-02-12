@@ -594,7 +594,7 @@ def run(sim: Simulation, args):
     fig, ax = plt.subplots(figsize=(12, 12))
 
     img = None
-    if not args.no_density:
+    if args.calc_density:
         img = plt.imshow(
             sim.density.numpy(),
             origin="lower",
@@ -623,10 +623,10 @@ def run(sim: Simulation, args):
     global seq
     seq = anim.FuncAnimation(
         fig,
-        sim.step_and_render_agents if args.no_density else sim.step_and_render_all,
-        fargs=(agents, ) if args.no_density else (agents, img),
+        sim.step_and_render_all if args.calc_density else sim.step_and_render_agents,
+        fargs=(agents, img) if args.calc_density else (agents, ),
         frames=args.num_frames,
-        blit=not args.no_density,
+        blit=args.calc_density,
         interval=1,
     )
 
@@ -660,6 +660,17 @@ class KernelSelector:
         return KernelSelector.kernels[name][index]
 
 
+def str2bool(v):
+    v_test = v.lower()
+    if v_test in ('0', 'false', 'off'):
+        return False
+    elif v_test in ('1', 'true', 'on'):
+        return True
+    raise ValueError(
+        "Invalid value for a boolean parameter. It should be one of: "
+        "0, false, off (for False), or 1, true, on (for True).")
+
+
 if __name__ == '__main__':
     import argparse
 
@@ -689,8 +700,8 @@ if __name__ == '__main__':
                         help="For a positive value, uses a grid with the specified cell resolution.")
     parser.add_argument("--seed", type=int, default=None,
                         help="Random seed for reproducibility.")
-    parser.add_argument('--no_density', action='store_true',
-                        help="Disable density field computation and rendering.")
+    parser.add_argument('--calc_density', action='store', type=str2bool, default=True,
+                        help="Configure whether a density field is calculated. (Default: True)")
     parser.add_argument('--run_all_frames', action='store_true',
                         help="Run through all frames will not detect stopping conditions.")
     parser.add_argument('--exit_on_stop', action='store_true',
@@ -731,7 +742,7 @@ if __name__ == '__main__':
             grid_size=args.grid_size,
             timing=args.timing,
             exit_on_stop=args.exit_on_stop or args.headless,
-            do_density=not args.no_density,
+            do_density=args.calc_density,
             run_all_frames=args.run_all_frames,
             vis_freq=args.vis_freq,
         )
