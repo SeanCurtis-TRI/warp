@@ -1,4 +1,5 @@
 import sys
+import time
 
 import numpy as np
 import warp as wp
@@ -633,11 +634,13 @@ def run(sim: Simulation, args):
     plt.show()
 
 def run_headless(sim: Simulation, args):
+    start_time = time.time()
     for i in range(args.num_frames):
         sim.step()
         if i % 50 == 0:
             print('.', end='', flush=True)
-    print(f"\nFinished after {i + 1} steps")
+    end_time = time.time()
+    print(f"\nTotal time for {i + 1} frames: {end_time - start_time:.2f} seconds.")
 
 
 class KernelSelector:
