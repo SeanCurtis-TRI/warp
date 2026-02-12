@@ -684,20 +684,20 @@ if __name__ == '__main__':
     parser.add_argument('--device', type=str, default=None,
                          help="Override the default Warp device.")
     parser.add_argument('--num_frames', type=int, default=800,
-                        help="Total number of frames.")
+                        help="Total number of frames. (Default: 800)")
     parser.add_argument('--num_agents', type=int, default=30,
-                        help="Number of agents in the crowd.")
+                        help="Number of agents in the crowd. (Default: 30)")
     parser.add_argument('--scenario', type=str, choices=list(scenarios.keys()),
                         default='circle',
-                        help=f"Choose a scenario: {', '.join(scenarios.keys())}")
+                        help=f"Choose a scenario: {', '.join(scenarios.keys())}. (Default: circle)")
     kernel_names = KernelSelector.valid_kernels()
     parser.add_argument('--density', type=str, choices=kernel_names,
                         default='gauss',
-                        help=f"Choose a density-field kernel: {', '.join(kernel_names)}")
+                        help=f"Choose a density-field kernel: {', '.join(kernel_names)}. (Default: gauss)")
     parser.add_argument('--timing', action='store_true',
                         help="Enable timing output.")
     parser.add_argument('--grid_size', action='store', type=int, default=0,
-                        help="For a positive value, uses a grid with the specified cell resolution.")
+                        help="For a positive value, uses a grid with the specified cell resolution. (Default: 0)")
     parser.add_argument("--seed", type=int, default=None,
                         help="Random seed for reproducibility.")
     parser.add_argument('--calc_density', action='store', type=str2bool, default=True,
@@ -709,7 +709,7 @@ if __name__ == '__main__':
     parser.add_argument('--headless', action='store_true',
                         help="Run without rendering. Implies --exit_on_stop.")
     parser.add_argument('--vis_freq', type=float, default=30,
-                        help='Frequency at which visualization is updated (in simulation seconds)')
+                        help='Frequency at which visualization is updated (in simulation seconds). (Default: 30)')
 
     # Simulation constants.
     constants = (
@@ -727,7 +727,7 @@ if __name__ == '__main__':
         ('rho_kernel_size', float, rho_kernel_size, 'The width of the density kernel support in meters'),
     )
     for name, type_, default_val, help in constants:
-        parser.add_argument(f'--{name}', type=type_, default=default_val, help=f'{help}; defaults to {default_val}.')
+        parser.add_argument(f'--{name}', type=type_, default=default_val, help=f'{help}. (Default: {default_val})')
 
     args = parser.parse_args()
     configure_constants(**vars(args))
