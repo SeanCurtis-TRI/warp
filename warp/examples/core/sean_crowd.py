@@ -445,7 +445,7 @@ class DummyGrid:
 
 
 class Simulation:
-    def __init__(self, scenario: Scenario, use_grid: bool, timing: bool = False,
+    def __init__(self, scenario: Scenario, grid_size: int, timing: bool = False,
                  exit_on_stop: bool = False, do_density: bool = True,
                  run_all_frames: bool = False, vis_freq: float = 30.0):
         self.num_agents = len(scenario.positions)
@@ -455,11 +455,10 @@ class Simulation:
 
         self.goals = wp.array(scenario.goals, dtype=wp.vec3)
 
-        self.use_grid = use_grid
+        self.use_grid = grid_size > 0
         if self.use_grid:
-            grid_rez = 48
-            self.grid = wp.HashGrid(grid_rez, grid_rez, 1)
-            self.grid_cell_size = domain_size / grid_rez
+            self.grid = wp.HashGrid(grid_size, grid_size, 1)
+            self.grid_cell_size = domain_size / grid_size
         else:
             # Dummy grid, so we don't have to branch in the kernel.
             self.grid = DummyGrid()
@@ -656,8 +655,8 @@ class KernelSelector:
         return list(KernelSelector.kernels.keys())
 
     @staticmethod
-    def get_kernel(name: str, use_grid: bool):
-        index = 1 if use_grid else 0
+    def get_kernel(name: str, grid_size: int):
+        index = 1 if grid_size > 0 else 0
         return KernelSelector.kernels[name][index]
 
 
@@ -686,8 +685,8 @@ if __name__ == '__main__':
                         help=f"Choose a density-field kernel: {', '.join(kernel_names)}")
     parser.add_argument('--timing', action='store_true',
                         help="Enable timing output.")
-    parser.add_argument('--use_grid', action='store_true',
-                        help="Use a spatial hash grid for neighbor queries.")
+    parser.add_argument('--grid_size', action='store', type=int, default=0,
+                        help="For a positive value, uses a grid with the specified cell resolution.")
     parser.add_argument("--seed", type=int, default=None,
                         help="Random seed for reproducibility.")
     parser.add_argument('--no_density', action='store_true',
@@ -724,12 +723,12 @@ if __name__ == '__main__':
 
     rng = np.random.default_rng(args.seed)
     scenario = scenarios[args.scenario](args.num_agents, rng)
-    scenario.density_kernel = KernelSelector.get_kernel(args.density, args.use_grid)
+    scenario.density_kernel = KernelSelector.get_kernel(args.density, args.grid_size)
 
     with wp.ScopedDevice(args.device):
         sim = Simulation(
             scenario=scenario,
-            use_grid=args.use_grid,
+            grid_size=args.grid_size,
             timing=args.timing,
             exit_on_stop=args.exit_on_stop or args.headless,
             do_density=not args.no_density,
