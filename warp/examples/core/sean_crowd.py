@@ -445,9 +445,9 @@ class DummyGrid:
 
 
 class Simulation:
-    def __init__(self, scenario: Scenario, grid_size: int, timing: bool = False,
-                 exit_on_stop: bool = False, do_density: bool = True,
-                 run_all_frames: bool = False, vis_freq: float = 30.0):
+    def __init__(self, scenario: Scenario, grid_size: int, timing: bool,
+                 exit_on_stop: bool, do_density: bool, run_all_frames: bool,
+                 vis_freq: float, dt: float, sub_steps: int):
         self.num_agents = len(scenario.positions)
         self.positions = wp.array(scenario.positions, dtype=wp.vec3)
         self.velocities = wp.array(scenario.velocities, dtype=wp.vec3)
@@ -478,8 +478,8 @@ class Simulation:
         # Note: the bigger the number of substeps, the faster things go,
         # because we do fewer density field computations (one for ever N sub
         # steps).
-        self.sub_steps = 50
-        self.dt = 0.001 * self.sub_steps  # For each solve, dt = 0.001.
+        self.sub_steps = sub_steps
+        self.dt = dt
         self.step_count = 0
 
         self.show_timings = timing
@@ -499,7 +499,7 @@ class Simulation:
                         f"the range [0, {max_speed:.2f}]! "
                         "Consider reducing dt or increasing max_speed.")
 
-    def step(self):
+    def step(self, num_frames):
         self.step_count += 1
         self.validate_state(-1)
         sub_dt = self.dt / self.sub_steps
@@ -523,15 +523,22 @@ class Simulation:
                 )
                 self.validate_state(i)
         self.update_density()
+        hit_end = False
+        if self.step_count >= num_frames:
+            print(f"\nReached the maximum number of frames ({num_frames}) "
+                  f"at time {self.step_count * self.dt:.3f})!")
+            hit_end = True
         if not self.run_all_frames:
             disp = self.positions.numpy() - self.goals.numpy()
             dist_sq = np.sum(disp[:, :2] * disp[:, :2], axis=1)
             if (dist_sq < radius * 0.25).all():
-                print(f"All agents have reached their goals at step "
-                      f"{self.step_count}!")
-                if self.exit_on_stop:
-                    sys.exit()
-                return False
+                print(f"\nAll agents have reached their goals at step "
+                      f"{self.step_count} (t = {self.step_count * self.dt:.3f})!")
+                hit_end = True
+        if hit_end:
+            if self.exit_on_stop:
+                sys.exit()
+            return False
         return True
 
     def update_density(self):
@@ -550,8 +557,8 @@ class Simulation:
         p *= field_resolution / domain_size
         return p
 
-    def step_and_render_agents(self, frame_num=None, agents=None):
-        running = self.step()
+    def step_and_render_agents(self, frame_num, num_frames, agents=None):
+        running = self.step(num_frames)
         
         t = self.step_count * self.dt
         if t >= self.next_vis:
@@ -570,9 +577,10 @@ class Simulation:
                 seq.event_source.stop()
         return agents
 
-    def step_and_render_all(self, frame_num=None, agents=None, density_img=None):
+    def step_and_render_all(self, frame_num, num_frames, agents=None,
+                            density_img=None):
         t = self.step_count * self.dt
-        self.step_and_render_agents(frame_num, agents)
+        self.step_and_render_agents(frame_num, num_frames, agents)
         if t >= self.next_vis:
             # Do *not* increment self.next_vis; it's handled in step-and_render_agents.
             with wp.ScopedTimer("render density", active=self.show_timings):
@@ -624,7 +632,7 @@ def run(sim: Simulation, args):
     seq = anim.FuncAnimation(
         fig,
         sim.step_and_render_all if args.calc_density else sim.step_and_render_agents,
-        fargs=(agents, img) if args.calc_density else (agents, ),
+        fargs=(args.num_frames, agents, img) if args.calc_density else (agents, ),
         frames=args.num_frames,
         blit=args.calc_density,
         interval=1,
@@ -634,10 +642,13 @@ def run(sim: Simulation, args):
 
 def run_headless(sim: Simulation, args):
     start_time = time.time()
+    steps_in_half_sec = int(1.0 / sim.dt + 0.5)
     for i in range(args.num_frames):
-        sim.step()
-        if i % 50 == 0:
+        running = sim.step(args.num_frames)
+        if i % steps_in_half_sec == 0:
             print('.', end='', flush=True)
+        if not running:
+            break
     end_time = time.time()
     print(f"\nTotal time for {i + 1} frames: {end_time - start_time:.2f} seconds.")
 
@@ -683,25 +694,35 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--device', type=str, default=None,
                          help="Override the default Warp device.")
-    parser.add_argument('--num_frames', type=int, default=800,
-                        help="Total number of frames. (Default: 800)")
+
+    # Time advancement
+    parser.add_argument('--sim_time', type=float, default=60.0,
+                     help="Total simulation time in seconds. (Default: 60.0)")
+    parser.add_argument('--time_step', type=float, default=0.050,
+                        help="Time step for the simulation in seconds. (Default: 0.050)")
+    parser.add_argument('--sub_steps', type=int, default=50,
+                        help="Number of sub-steps to take per frame. (Default: 50)")
+    # Scenario configuration
     parser.add_argument('--num_agents', type=int, default=30,
                         help="Number of agents in the crowd. (Default: 30)")
     parser.add_argument('--scenario', type=str, choices=list(scenarios.keys()),
                         default='circle',
                         help=f"Choose a scenario: {', '.join(scenarios.keys())}. (Default: circle)")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Random seed for reproducibility.")
+    # Density field
     kernel_names = KernelSelector.valid_kernels()
     parser.add_argument('--density', type=str, choices=kernel_names,
                         default='gauss',
                         help=f"Choose a density-field kernel: {', '.join(kernel_names)}. (Default: gauss)")
-    parser.add_argument('--timing', action='store_true',
-                        help="Enable timing output.")
-    parser.add_argument('--grid_size', action='store', type=int, default=0,
-                        help="For a positive value, uses a grid with the specified cell resolution. (Default: 0)")
-    parser.add_argument("--seed", type=int, default=None,
-                        help="Random seed for reproducibility.")
     parser.add_argument('--calc_density', action='store', type=str2bool, default=True,
                         help="Configure whether a density field is calculated. (Default: True)")
+    # Acceleration
+    parser.add_argument('--grid_size', action='store', type=int, default=0,
+                        help="For a positive value, uses a grid with the specified cell resolution. (Default: 0)")
+    # Logistics
+    parser.add_argument('--timing', action='store_true',
+                        help="Enable timing output.")
     parser.add_argument('--run_all_frames', action='store_true',
                         help="Run through all frames will not detect stopping conditions.")
     parser.add_argument('--exit_on_stop', action='store_true',
@@ -732,6 +753,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
     configure_constants(**vars(args))
 
+    num_frames = int(args.sim_time / args.time_step + 0.5)
+    args.num_frames = num_frames
+
     rng = np.random.default_rng(args.seed)
     scenario = scenarios[args.scenario](args.num_agents, rng)
     scenario.density_kernel = KernelSelector.get_kernel(args.density, args.grid_size)
@@ -741,10 +765,12 @@ if __name__ == '__main__':
             scenario=scenario,
             grid_size=args.grid_size,
             timing=args.timing,
-            exit_on_stop=args.exit_on_stop or args.headless,
+            exit_on_stop=args.exit_on_stop,
             do_density=args.calc_density,
             run_all_frames=args.run_all_frames,
             vis_freq=args.vis_freq,
+            dt=args.time_step,
+            sub_steps=args.sub_steps,
         )
         if args.headless:
             run_headless(sim, args)

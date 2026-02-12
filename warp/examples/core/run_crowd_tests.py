@@ -10,7 +10,9 @@ def set_required_parameters(param_dict):
         param_dict (dict): The dictionary of parameters to check.
     """
     param_dict["headless"] = None
-    param_dict["num_frames"] = 1000
+    param_dict["sim_time"] = 50  # s
+    param_dict["time_step"] = 0.05  # s
+    param_dict["sub_steps"] = 50
     param_dict["scenario"] = "circle"
     param_dict["domain_size"] = 130
     param_dict["run_all_frames"] = None
@@ -128,7 +130,7 @@ def run_script_repeatedly(script_path, parameters_list, columns: list=None):
                                                value.
     """
     data = []
-    for params in parameters_list:
+    for i, params in enumerate(parameters_list):
         set_required_parameters(params)
         # Build the full command
         command = ['python', script_path] + param_dict_to_list(params)
@@ -142,6 +144,7 @@ def run_script_repeatedly(script_path, parameters_list, columns: list=None):
                 stderr=subprocess.PIPE,     # Capture stderr (optional, good practice)
                 text=True                   # Decode output as text (str), not bytes
             )
+            print(f"{i}: {iteration_header(params)}")
             data.append(extract_columns(params, extract_output(result.stdout), columns))
                 
         except subprocess.CalledProcessError as e:
@@ -156,6 +159,7 @@ def run_script_repeatedly(script_path, parameters_list, columns: list=None):
         except Exception as e:
             print(f"An unexpected error occurred: {e}")
             break
+    print()
     print(", ".join(columns))
     for row in data:
         print(", ".join([str(value) for value in row]))
@@ -177,8 +181,10 @@ if __name__ == "__main__":
                 params["grid_size"] = grid_size
                 all_parameters.append(params.copy())
     
-    all_parameters = [
-        {"calc_density": "TRUE", "num_agents": 20},
-        {"calc_density": "FALSE", "num_agents": 100},
-    ]
+    # The overload below is for testing changes to this code. The full test is
+    # constructed above.
+    # all_parameters = [
+    #     {"calc_density": "TRUE", "num_agents": 20},
+    #     {"calc_density": "FALSE", "num_agents": 100},
+    # ]
     run_script_repeatedly(script_path, all_parameters, columns=columns)
