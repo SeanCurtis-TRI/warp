@@ -9,13 +9,13 @@ def set_required_parameters(param_dict):
     Args:
         param_dict (dict): The dictionary of parameters to check.
     """
-    param_dict["headless"] = None
-    param_dict["sim_time"] = 50  # s
-    param_dict["time_step"] = 0.05  # s
-    param_dict["sub_steps"] = 50
-    param_dict["scenario"] = "circle"
     param_dict["domain_size"] = 130
+    param_dict["headless"] = None
     param_dict["run_all_frames"] = None
+    param_dict["scenario"] = "circle"
+    param_dict["sim_time"] = 50  # s
+    param_dict["sub_steps"] = 50
+    param_dict["time_step"] = 0.05  # s
 
 def param_dict_to_list(param_dict):
     """
