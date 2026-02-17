@@ -439,6 +439,55 @@ def four_blocks_scenario(num_agents: int, rng: np.random.Generator):
                 i += 1
     return Scenario(positions, velocities, goals, colors)
 
+
+def counter_flow_scenario(num_agents: int, rng: np.random.Generator):
+    """Agents are initialized in two groups on opposite sides of the domain,
+    with goals on the opposite side, creating a counter-flow scenario.
+
+    The agent initial positions are located in two initial boxes with
+    equal average density. The boxes are positioned so that the near edge of
+    the boxes are always a fixed distance apart -- quarter the width of the
+    domain.
+    """
+    # Add a little noise to break symmetry.
+    print("domain_size", domain_size)
+    rect_width = domain_size * 0.35
+    half_agents = num_agents // 2
+    target_density = 0.75
+    rect_height = min(half_agents / (target_density * rect_width),
+                      domain_size - 5 * radius)
+
+    # Value from [-0.5, 0.5]
+    positions = (rng.random((num_agents, 3)) - 0.5)
+    positions[:, 0] *= rect_width
+    positions[:, 1] *= rect_height
+    positions[:, 2] = 0.0
+    velocities = np.zeros_like(positions)
+    goals = np.empty_like(positions)
+    colors = np.empty((num_agents, 3), dtype=np.float32)
+
+    vertical_noise = (rng.random(num_agents) - 0.5) * domain_size * 0.2
+
+    half = num_agents // 2
+    print("num agents", num_agents)
+    for i in range(num_agents):
+        if i < half:
+            # Left side
+            positions[i, 0] -= (domain_size * 0.125 + rect_width * 0.5)
+            goals[i, :] = positions[i, :]
+            goals[i, 0] = -goals[i, 0]
+            colors[i, :] = np.array([1.0, 0.0, 0.0])
+        else:
+            # Right side
+            positions[i, 0] += (domain_size * 0.125 + rect_width * 0.5)
+            goals[i, :] = positions[i, :]
+            goals[i, 0] = -goals[i, 0]
+            colors[i, :] = np.array([0.0, 1.0, 0.0])
+    goals[:, 1] += vertical_noise
+    goals[:, 1] = np.clip(goals[:, 1], -rect_height * 0.5, rect_height * 0.5)
+    return Scenario(positions, velocities, goals, colors)
+
+
 class DummyGrid:
     def __init__(self):
         self.id = wp.uint64(0)
@@ -689,6 +738,7 @@ if __name__ == '__main__':
         'random': random_scenario,
         'circle': circle_scenario,
         'four_blocks': four_blocks_scenario,
+        'counter': counter_flow_scenario,
     }
 
     parser = argparse.ArgumentParser()
