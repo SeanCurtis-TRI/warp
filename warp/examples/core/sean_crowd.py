@@ -1,3 +1,6 @@
+# ~/code/learning/warp
+# source ./.venv/bin/activate
+
 import sys
 import time
 
