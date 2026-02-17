@@ -649,6 +649,7 @@ def run(sim: Simulation, args):
     agents = []
 
     fig, ax = plt.subplots(figsize=(12, 12))
+    ax.set_title("Crowd Simulation - Social forces")
 
     img = None
     if args.calc_density:
@@ -676,6 +677,13 @@ def run(sim: Simulation, args):
         circle = patches.Circle(pi, radius=r, color=scenario.colors[i, :])
         ax.add_patch(circle)
         agents.append(circle)
+
+    def update(frame_num, agents, img):
+        ax.set_title(f"Time: {sim.step_count * sim.dt:.2f} s")
+        if args.calc_density:
+            return sim.step_and_render_all(frame_num, args.num_frames, agents, img)
+        else:
+            return sim.step_and_render_agents(frame_num, args.num_frames, agents)
 
     global seq
     seq = anim.FuncAnimation(
