@@ -12,7 +12,7 @@ def set_required_parameters(param_dict):
     param_dict["domain_size"] = 130
     param_dict["headless"] = None
     param_dict["run_all_frames"] = None
-    param_dict["scenario"] = "circle"
+    param_dict["scenario"] = "counter"
     param_dict["sim_time"] = 50  # s
     param_dict["sub_steps"] = 50
     param_dict["time_step"] = 0.05  # s
