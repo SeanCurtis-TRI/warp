@@ -499,7 +499,8 @@ class DummyGrid:
 class Simulation:
     def __init__(self, scenario: Scenario, grid_size: int, timing: bool,
                  exit_on_stop: bool, do_density: bool, run_all_frames: bool,
-                 vis_freq: float, dt: float, sub_steps: int):
+                 vis_freq: float, dt: float, sub_steps: int, use_graph: bool,
+                 debug: bool = False):
         self.num_agents = len(scenario.positions)
         self.positions = wp.array(scenario.positions, dtype=wp.vec3)
         self.velocities = wp.array(scenario.velocities, dtype=wp.vec3)
@@ -533,6 +534,7 @@ class Simulation:
         self.sub_steps = sub_steps
         self.dt = dt
         self.step_count = 0
+        self.sub_dt = self.dt / self.sub_steps
 
         self.show_timings = timing
         self.run_all_frames = run_all_frames
@@ -541,7 +543,15 @@ class Simulation:
         self.next_vis = 0.0
         self.vis_dt = 1.0 / vis_freq
 
+        self.debug = debug
+        self.cuda_graph = None
+        if use_graph and wp.get_device().is_cuda:
+            with wp.ScopedCapture() as capture:
+                self.take_multi_steps()
+            self.cuda_graph = capture.graph
+
     def validate_state(self, i: int):
+        if not self.debug: return
         v = self.velocities.numpy()
         speeds = np.linalg.norm(v[:, :2], axis=1)
         if not (speeds.max() <= max_speed * 1.1):
@@ -551,29 +561,33 @@ class Simulation:
                         f"the range [0, {max_speed:.2f}]! "
                         "Consider reducing dt or increasing max_speed.")
 
+    def take_multi_steps(self):
+        for i in range(self.sub_steps):
+            if self.use_grid:
+                self.grid.build(self.positions, self.grid_cell_size)
+                wp.launch(compute_accel_grid, dim=self.num_agents,
+                        inputs=[self.positions, self.velocities, self.accels,
+                                self.goals, self.sub_dt, self.grid.id]
+                )
+            else:
+                wp.launch(compute_accel, dim=self.num_agents,
+                        inputs=[self.positions, self.velocities, self.accels,
+                                self.goals, self.sub_dt]
+                )
+
+            wp.launch(integrate, dim=self.num_agents,
+                    inputs=[self.positions, self.velocities, self.accels,
+                            self.sub_dt]
+            )
+
     def step(self, num_frames):
         self.step_count += 1
         self.validate_state(-1)
-        sub_dt = self.dt / self.sub_steps
         with wp.ScopedTimer("compute agents", active=self.show_timings):
-            for i in range(self.sub_steps):
-                if self.use_grid:
-                    self.grid.build(self.positions, self.grid_cell_size)
-                    wp.launch(compute_accel_grid, dim=self.num_agents,
-                            inputs=[self.positions, self.velocities, self.accels,
-                                    self.goals, sub_dt, self.grid.id]
-                    )
-                else:
-                    wp.launch(compute_accel, dim=self.num_agents,
-                            inputs=[self.positions, self.velocities, self.accels,
-                                    self.goals, sub_dt]
-                    )
-
-                wp.launch(integrate, dim=self.num_agents,
-                        inputs=[self.positions, self.velocities, self.accels,
-                                sub_dt]
-                )
-                self.validate_state(i)
+            if self.cuda_graph is not None:
+                wp.capture_launch(self.cuda_graph)
+            else:
+                self.take_multi_steps()
         self.update_density()
         hit_end = False
         if self.step_count >= num_frames:
@@ -792,6 +806,8 @@ if __name__ == '__main__':
                         help="Run without rendering. Implies --exit_on_stop.")
     parser.add_argument('--vis_freq', type=float, default=30,
                         help='Frequency at which visualization is updated (in simulation seconds). (Default: 30)')
+    parser.add_argument("--use_graph", action='store', type=str2bool,
+                        default=False, help="Use Warp Graph to compute agent forces. (Default: False)")
 
     # Simulation constants.
     constants = (
@@ -832,6 +848,8 @@ if __name__ == '__main__':
             vis_freq=args.vis_freq,
             dt=args.time_step,
             sub_steps=args.sub_steps,
+            use_graph=args.use_graph,
+            debug=False,
         )
         if args.headless:
             run_headless(sim, args)
