@@ -614,14 +614,18 @@ class Simulation:
                             dim=(field_resolution, field_resolution),
                             inputs=[self.positions, self.density, self.grid.id])
 
-    def map_to_field(self, p):
+    def map_to_field(self, p: wp.array(dtype=wp.vec3)):
         """Given a position in "world" space, map it to the density field.
 
         [-hw, -hhw]x[hw, hh] --> [0, 0]x[field_resolution, field_resolution]
         """
-        p += np.array(((domain_size * 0.5, domain_size * 0.5, 0.0),))
-        p *= field_resolution / domain_size
-        return p
+        mapped = p.numpy()
+        if wp.get_device() == "cpu":
+            # On the CPU p.numpy() is an alias for p, so we need a copy.
+            mapped = mapped.copy()
+        mapped += np.array(((domain_size * 0.5, domain_size * 0.5, 0.0),))
+        mapped *= field_resolution / domain_size
+        return mapped
 
     def step_and_render_agents(self, frame_num, num_frames, agents=None):
         running = self.step(num_frames)
@@ -632,7 +636,7 @@ class Simulation:
             # Update agent patches
             with wp.ScopedTimer("render agents", active=self.show_timings):
                 if agents:
-                    positions = self.map_to_field(self.positions.numpy())
+                    positions = self.map_to_field(self.positions)
                     for i, agent in enumerate(agents):
                         pos = positions[i]
                         agent.center = (pos[0], pos[1])
@@ -706,7 +710,7 @@ def run(sim: Simulation, args):
     seq = anim.FuncAnimation(
         fig,
         sim.step_and_render_all if args.calc_density else sim.step_and_render_agents,
-        fargs=(args.num_frames, agents, img) if args.calc_density else (agents, ),
+        fargs=(args.num_frames, agents, img) if args.calc_density else (args.num_frames, agents, ),
         frames=args.num_frames,
         blit=args.calc_density,
         interval=1,
